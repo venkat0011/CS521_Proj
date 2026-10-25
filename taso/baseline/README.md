@@ -1,17 +1,35 @@
-# Vanilla TASO baseline
+# Vanilla TASO baseline: terminal workflow
 
-Local execution was attempted and failed: TASO is not installed. The host is
-Apple Silicon macOS, CUDA tools are absent, and Docker is not running.
-`results/baseline.json` records the actual failed attempt. No performance
-numbers were obtained and no bottleneck has been established.
+Run in the Colab terminal after connecting a GPU runtime:
 
-For Colab, open `vanilla_taso_colab.ipynb` in a GPU runtime and run the clone cell to obtain this repository. The notebook is UNTESTED on Colab.
-It inspects dependencies before attempting a build and may stop for missing
-or incompatible legacy cuDNN dependencies. Do not interpret a prepared notebook
-as a successful installation. Keep the first failure output for diagnosis.
+```sh
+git clone https://github.com/venkat0011/CS521_Proj.git
+cd CS521_Proj
+python3 taso/baseline/setup_and_run.py
+```
 
-The tiny test constructs Conv -> ReLU, prints TASO substitutions, and saves
-operator counts, estimated costs, measured execution times and optimization
-wall time. These are smoke-test observations, not controlled speedup results
-or numerical equivalence checks. Internal profiling is the next step after
-successful execution. The TASO source itself has not been changed.
+If the repository is already cloned, enter it and run `git pull --ff-only`
+before the Python command. No .ipynb file or file upload is required.
+
+The runner checks Linux/NVIDIA GPU/CUDA, installs missing system build tools,
+creates `.venv-taso`, installs the initial dependency set in that isolated
+Python environment, builds TASO's C++ library, installs the Python bindings,
+and runs `run_baseline.py` on Input -> Conv -> ReLU.
+
+This initial setup targets Linux x86_64, Python 3.9–3.12 and CUDA 12 with
+NVIDIA cuDNN 8.9.7.29 (https://pypi.org/project/nvidia-cudnn-cu12/8.9.7.29/).
+It does not change TASO's search source or replace the global Python packages.
+Other CUDA/Python environments stop with an explanatory diagnostic. The actual
+Colab GPU build is not yet verified; legacy compiler/library compatibility may
+still require changes. Dependency setup downloads several large packages.
+
+Results are written to `taso/baseline/results/`:
+
+- `setup.log`: streamed dependency/build/search output.
+- `setup_status.json`: success or exact failing stage.
+- `baseline.json`: graph costs and timings, only if the baseline reaches its
+  Python report-writing path. A failed or aborted native process may not create it.
+
+Paste the result JSON or the last error lines into the project chat. No
+performance or bottleneck claims have been established yet. The tiny test is
+a smoke run, not a numerical equivalence check or controlled speedup study.
