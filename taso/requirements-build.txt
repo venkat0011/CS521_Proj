@@ -1,0 +1,8 @@
+# Initial Linux GPU build dependencies; validated Colab lockfile pending.
+pip==25.3
+setuptools==80.9.0
+wheel==0.45.1
+cmake==3.26.4
+Cython==0.29.37
+numpy==1.26.4
+onnx==1.16.2

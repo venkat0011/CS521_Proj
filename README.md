@@ -36,3 +36,14 @@ TASO: https://github.com/jiazhihao/TASO
 Vendored from commit `f11782c4db180ad7d1e7ff7f4bb82e574ac3b6b8`.
 The original Apache 2.0 license is retained at `taso/TASO/LICENSE`.
 The upstream Git metadata is not part of this repository.
+
+## Separate Python environments
+
+`python3 setup_env.py taso` creates `taso/.venv`; `python3 setup_env.py tensat`
+creates `tensat/.venv`. Each folder has its own `.python-version`. Both start
+with Python 3.11.17; their versions can change independently. uv downloads
+the interpreter instead of relying on Colab's default version.
+
+The TASO runner creates its environment automatically. Tensat currently has
+only a Python scaffold, not an installed optimizer. Recreate environments on
+each machine rather than copying them. CUDA/compilers remain host dependencies.

@@ -12,11 +12,11 @@ If the repository is already cloned, enter it and run `git pull --ff-only`
 before the Python command. No .ipynb file or file upload is required.
 
 The runner checks Linux/NVIDIA GPU/CUDA, installs missing system build tools,
-creates `.venv-taso`, installs the initial dependency set in that isolated
+creates `taso/.venv` using the Python version pinned in `taso/.python-version`, installs the initial dependency set in that isolated
 Python environment, builds TASO's C++ library, installs the Python bindings,
 and runs `run_baseline.py` on Input -> Conv -> ReLU.
 
-This initial setup targets Linux x86_64, Python 3.9–3.12 and CUDA 12 with
+This initial setup targets Linux x86_64, managed Python 3.11.17 and CUDA 12 with
 NVIDIA cuDNN 8.9.7.29 (https://pypi.org/project/nvidia-cudnn-cu12/8.9.7.29/).
 It does not change TASO's search source or replace the global Python packages.
 Other CUDA/Python environments stop with an explanatory diagnostic. The actual
@@ -33,3 +33,24 @@ Results are written to `taso/baseline/results/`:
 Paste the result JSON or the last error lines into the project chat. No
 performance or bottleneck claims have been established yet. The tiny test is
 a smoke run, not a numerical equivalence check or controlled speedup study.
+
+## Python environment
+
+The runner downloads the pinned Python interpreter using uv if necessary;
+it does not inherit Colab's default Python version. To create just the Python
+environment, without building TASO:
+
+```sh
+python3 setup_env.py taso
+source taso/.venv/bin/activate
+python --version
+```
+
+The separate Tensat scaffold is created with `python3 setup_env.py tensat`.
+Never copy a Mac virtual environment to Colab; recreate it from the checked-in
+version and requirements files. A venv isolates Python packages, not the host
+GPU driver, CUDA toolkit or system compiler. Colab resets can remove the
+installed environments, so rerun setup when needed. `python-packages.txt`
+records resolved package versions; this is not yet a complete validated lock.
+
+An older `.venv-taso` may remain locally; the runner now uses `taso/.venv`.

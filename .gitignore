@@ -12,6 +12,7 @@ __pycache__/
 *.py[cod]
 .venv/
 .venv-taso/
+.tools/
 venv/
 **/build/
 **/dist/
