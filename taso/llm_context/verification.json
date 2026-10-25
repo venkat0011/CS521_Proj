@@ -1,0 +1,16 @@
+{
+  "passed": [
+    "Static extraction: 18 C++ and 133 protobuf registrations",
+    "Graph fixture includes external input nodes, shapes and edges",
+    "Messages combine graph, saved catalog and source",
+    "Injected model callable returns validated strategy",
+    "Request, raw response and strategy saved",
+    "Unknown/duplicate/empty proposed IDs rejected",
+    "Malformed JSON rejected; needs_information accepted"
+  ],
+  "not_run": [
+    "Live TASO extraction",
+    "Real provider API call",
+    "Strategy execution in TASO"
+  ]
+}

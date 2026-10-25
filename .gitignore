@@ -1,0 +1,28 @@
+# Local configuration and credentials
+.DS_Store
+.vscode/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python and native build artifacts
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+**/build/
+**/dist/
+*.egg-info/
+*.so
+*.dylib
+*.o
+
+# Reproducible generated context and experiment output
+taso/llm_context/prepared/
+taso/baseline/results/
+taso/baseline/taso_baseline_source.zip
+**/runs/
+**/timer.txt
+.ipynb_checkpoints/

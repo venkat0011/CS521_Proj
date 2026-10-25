@@ -1,0 +1,41 @@
+"""Per-workload structural extraction from a live TASO PyGraph.
+
+TASO is imported only when graph_context() is called.
+"""
+
+def graph_context(graph):
+    """Read a live PyGraph without exporting weights or executing optimization."""
+    import taso
+    nodes, edges, warnings = [], [], []
+    operators = graph.get_operator_list()
+    ids = {int(op['guid']) for op in operators}
+    external_nodes = {}
+    for op in operators:
+        guid = int(op['guid'])
+        kind = graph.get_operator_type(op)
+        attrs = {}
+        for attr in taso.operator_attrs.get(kind, []):
+            if attr == 'axes':
+                warnings.append(f'{guid}: axes omitted; TASO getter contains a placeholder')
+                continue
+            attrs[attr] = graph.get_operator_attr(op, attr)
+        nodes.append({'id': guid, 'type': kind, 'attributes': attrs,
+                      'output_shapes': [graph.get_output_dims(op, i)
+                                        for i in range(graph.get_num_outputs(op))]})
+        for edge in graph.get_input_edges(op):
+            src = int(edge['srcOp']['guid'])
+            if src not in ids and src not in external_nodes:
+                external_nodes[src] = {
+                    'id': src, 'type': graph.get_operator_type(edge['srcOp']),
+                    'attributes': {},
+                    'output_shapes': [graph.get_output_dims(edge['srcOp'], i)
+                                      for i in range(graph.get_num_outputs(edge['srcOp']))],
+                }
+            edges.append({'source': src, 'source_output': int(edge['srcIdx']),
+                          'destination': guid, 'destination_input': int(edge['dstIdx']),
+                          'shape': graph.get_input_dims(op, edge['dstIdx']),
+                          'external_source': src not in ids})
+    warnings.append('This uses existing public getters: fused convolution activation and other unexposed attributes are not a complete serialization. Add C++ getters before relying on those details for guidance.')
+    return {'status': 'live_taso_graph', 'nodes': list(external_nodes.values()) + nodes, 'edges': edges,
+            'estimated_cost_ms': graph.cost(), 'warnings': warnings,
+            'weight_values_included': False}
