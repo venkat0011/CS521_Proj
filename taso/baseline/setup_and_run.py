@@ -17,6 +17,8 @@ import shutil
 import subprocess
 import sys
 import traceback
+import tempfile
+import urllib.request
 
 
 class Runner:
@@ -41,20 +43,67 @@ class Runner:
         if code:
             raise RuntimeError(f'{self.stage}: command exited with code {code}')
 
+    def find_cuda12(self):
+        candidates = []
+        if self.env.get('CUDA_HOME'):
+            candidates.append(Path(self.env['CUDA_HOME']) / 'bin' / 'nvcc')
+        candidates.append(Path('/usr/local/cuda-12.6/bin/nvcc'))
+        current = shutil.which('nvcc', path=self.env.get('PATH'))
+        if current:
+            candidates.append(Path(current))
+        candidates.extend(sorted(Path('/usr/local').glob('cuda-12.*/bin/nvcc'), reverse=True))
+        for candidate in candidates:
+            if not candidate.is_file():
+                continue
+            version = subprocess.check_output([str(candidate), '--version'], text=True, env=self.env)
+            if re.search(r'release\s+12\.', version):
+                self.write(version)
+                return candidate.resolve()
+        return None
+
+    def configure_cuda(self):
+        self.stage = 'cuda_toolkit'
+        nvcc = self.find_cuda12()
+        if nvcc is None:
+            release = {}
+            for line in Path('/etc/os-release').read_text().splitlines():
+                if '=' in line:
+                    key, value = line.split('=', 1)
+                    release[key] = value.strip('"')
+            if release.get('ID') != 'ubuntu' or release.get('VERSION_ID') not in ('22.04', '24.04'):
+                raise RuntimeError('Automatic CUDA 12.6 installation supports Ubuntu 22.04/24.04. Share setup.log for other environments.')
+            if not shutil.which('apt-get'):
+                raise RuntimeError('apt-get is required for automatic CUDA installation.')
+            admin = [] if os.geteuid() == 0 else ['sudo']
+            if admin and not shutil.which('sudo'):
+                raise RuntimeError('CUDA installation requires root or sudo access.')
+            distro = 'ubuntu' + release['VERSION_ID'].replace('.', '')
+            url = f'https://developer.download.nvidia.com/compute/cuda/repos/{distro}/x86_64/cuda-keyring_1.1-1_all.deb'
+            self.write('No CUDA 12 toolkit found; installing CUDA 12.6 alongside existing toolkits. GPU driver is retained.')
+            with tempfile.TemporaryDirectory(dir=self.results) as temporary:
+                keyring = Path(temporary) / 'cuda-keyring.deb'
+                urllib.request.urlretrieve(url, keyring)
+                self.run(admin + ['dpkg', '-i', str(keyring)])
+            self.run(admin + ['apt-get', 'update', '-qq'])
+            self.run(admin + ['apt-get', 'install', '-y', '--no-install-recommends', 'cuda-toolkit-12-6'])
+            nvcc = self.find_cuda12()
+            if nvcc is None:
+                raise RuntimeError('CUDA installation finished but a CUDA 12 nvcc was not found.')
+        cuda = nvcc.parents[1]
+        self.env['CUDA_HOME'] = str(cuda)
+        self.env['CUDACXX'] = str(nvcc)
+        self.env['PATH'] = str(cuda / 'bin') + os.pathsep + self.env.get('PATH', '')
+        self.env['LD_LIBRARY_PATH'] = str(cuda / 'lib64') + os.pathsep + self.env.get('LD_LIBRARY_PATH', '')
+        self.write(f'Selected CUDA toolkit: {cuda}')
+        return cuda, nvcc
+
     def build(self, root, args):
         if platform.system() != 'Linux' or platform.machine() not in ('x86_64', 'AMD64'):
             raise RuntimeError('Use a Linux x86_64 NVIDIA GPU runtime, such as Colab. This setup does not support macOS.')
         if not shutil.which('nvidia-smi'):
             raise RuntimeError('nvidia-smi is missing. Select/connect a GPU runtime.')
         self.run(['nvidia-smi'])
-        nvcc = shutil.which('nvcc')
-        if not nvcc:
-            raise RuntimeError('CUDA development toolkit missing: nvcc not found.')
-        version = subprocess.check_output([nvcc, '--version'], text=True)
-        self.write(version)
-        if not re.search(r'release\s+12\.', version):
-            raise RuntimeError('This initial dependency set targets CUDA 12. Share the nvcc output to adapt other versions.')
-        cuda = Path(nvcc).resolve().parents[1]
+        cuda, nvcc = self.configure_cuda()
         source = root / 'taso' / 'TASO'
         if not (source / 'graph_subst.pb').is_file():
             raise RuntimeError(f'TASO source or rewrite file missing: {source}')

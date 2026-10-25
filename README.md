@@ -22,6 +22,8 @@ python3 taso/baseline/setup_and_run.py
 No notebook file is required. If already cloned, run `git pull --ff-only`
 inside the checkout before the Python command.
 See `taso/baseline/README.md` for supported environment versions and result paths.
+The script selects or installs CUDA 12.6 when needed, then creates the TASO
+Python environment and builds/runs TASO. No separate CUDA setup command is needed.
 The GPU build has not yet been verified; failures are saved with their stage
 and full log. No successful baseline performance results have been obtained yet.
 
