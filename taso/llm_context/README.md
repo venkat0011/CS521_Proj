@@ -42,7 +42,8 @@ The model/provider adapter is intentionally supplied by the experiment.
 No provider has been chosen or configured. There is no actual provider SDK
 integration yet. The callable receives normal system/user message dictionaries
 and must return the model's JSON text. Unknown/duplicate rule IDs and malformed
-responses are rejected. Validated proposals do not execute in TASO yet.
+responses are rejected. This adapter still returns its original rule-list format. It is not yet connected
+to the new phase-schedule API; see ../strategies/README.md for the manual executor.
 
 To inspect the request before making an API call:
 
@@ -65,8 +66,8 @@ print(len(messages[1]["content"]))
 - Static data is loaded from disk for each request, but not re-extracted. It
   must still be sent to a stateless provider unless a provider caching/session
   mechanism is added.
-- C++ search control is a later step. This pipeline proposes existing rule IDs;
-  it does not apply them to TASO.
+- The C++ phase executor now accepts manual schedules. This LLM adapter has
+  not yet been connected to that phase format or used for offline synthesis.
 
 The old combined build_context.py and placeholder prompt/context files were
 replaced by these modules and the prepared static context.

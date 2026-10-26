@@ -110,7 +110,7 @@ def rule_catalog(repo):
     ops = (repo / 'src/core/ops.cc').read_text()
     subst = (repo / 'src/core/substitution.cc').read_text()
     header = (repo / 'include/taso/ops.h').read_text()
-    registration = function(ops, 'Graph* Graph::optimize(').split('std::priority_queue')[0]
+    registration = function(ops, 'Graph* Graph::optimize_scheduled(').split('std::priority_queue')[0]
     active = uncomment(registration)
     expected = ['create_conv_relu', 'create_conv_batch', 'create_conv_mul',
                 'create_enlarge_merge_convs', 'create_enlarge_merge_convs',
@@ -163,7 +163,7 @@ def prepare_context(repo, out):
     repo, out = Path(repo).resolve(), Path(out).resolve()
     catalog = rule_catalog(repo)
     selected = {
-        'src/core/ops.cc': ['Graph* Graph::optimize(', 'float Graph::total_cost('],
+        'src/core/ops.cc': ['Graph* Graph::optimize(', 'Graph* Graph::optimize_scheduled(', 'float Graph::total_cost('],
         'src/core/substitution.cc': ['void GraphXfer::load_graph_xfer_from_pb_file(',
                                    'void GraphXfer::run(', 'Graph* GraphXfer::create_new_graph(',
                                    'bool GraphXfer::can_match('],

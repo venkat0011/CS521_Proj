@@ -17,6 +17,11 @@
 #include "taso/substitution.h"
 #include <iostream>
 #include <fstream>
+#include <chrono>
+#include <cmath>
+#include <iomanip>
+#include <stdexcept>
+#include "taso/search_schedule.h"
 using namespace std;
 using namespace taso;
 
@@ -403,7 +408,34 @@ TensorHandle Graph::new_weight(const Tensor& weight)
 
 Graph* Graph::optimize(float alpha, int budget, bool print_subst)
 {
+  // Preserve legacy expansion count (upstream used counter > budget).
+  if (budget < 0 || budget == INT_MAX)
+    throw std::invalid_argument("Legacy budget must be in [0, INT_MAX)");
+  return optimize_scheduled(alpha, std::vector<int>(1, budget + 1),
+      std::vector<std::vector<int> >(1), print_subst, "");
+}
+
+Graph* Graph::optimize_scheduled(float alpha, const std::vector<int>& phase_budgets,
+    const std::vector<std::vector<int> >& phase_rules, bool print_subst,
+    const std::string& trace_file)
+{
+  SearchSchedule schedule(phase_budgets, phase_rules);
+  if (!std::isfinite(alpha) || alpha < 1.0f)
+    throw std::invalid_argument("alpha must be finite and at least 1");
+
   std::vector<GraphXfer*> xfers;
+  struct XferOwner {
+    std::vector<GraphXfer*>& xfers;
+    explicit XferOwner(std::vector<GraphXfer*>& rules) : xfers(rules) {}
+    ~XferOwner() {
+      for (size_t i = 0; i < xfers.size(); ++i) {
+        std::set<OpX*> patterns(xfers[i]->srcOps.begin(), xfers[i]->srcOps.end());
+        patterns.insert(xfers[i]->dstOps.begin(), xfers[i]->dstOps.end());
+        for (std::set<OpX*>::iterator it = patterns.begin(); it != patterns.end(); ++it) delete *it;
+        delete xfers[i];
+      }
+    }
+  } rule_owner(xfers);
   for (int i = 1; i < 3; i++)
     for (int j = 0; j < 2; j++) {
       PaddingMode pad_mode = (j == 0) ? PD_MODE_SAME : PD_MODE_VALID;
@@ -437,54 +469,101 @@ Graph* Graph::optimize(float alpha, int budget, bool print_subst)
   //xfers.push_back(create_enlarge_conv_xfer(model));
   //xfers.push_back(create_resnet_merge_xfer(model));
 
+  for (size_t p = 0; p < phase_rules.size(); ++p)
+    for (size_t j = 0; j < phase_rules[p].size(); ++j)
+      if (phase_rules[p][j] < 0 || (size_t)phase_rules[p][j] >= xfers.size())
+        throw std::invalid_argument("Rule index is not registered in this TASO checkout");
+  std::ofstream trace;
+  if (!trace_file.empty()) {
+    trace.open(trace_file.c_str());
+    if (!trace) throw std::runtime_error("Cannot open search trace file");
+    trace << std::setprecision(12);
+  }
+  const bool profiling = trace.is_open();
+  std::vector<std::vector<RewriteStats> > stats(
+      phase_budgets.size(), std::vector<RewriteStats>(xfers.size()));
+  std::vector<int> expanded(phase_budgets.size(), 0);
   std::priority_queue<Graph*, std::vector<Graph*>, GraphCompare> candidates;
   std::set<size_t> hashmap;
   candidates.push(this);
   hashmap.insert(hash());
-  Graph *bestGraph = this;
+  Graph* bestGraph = this;
   float bestCost = total_cost();
-  //printf("MetaFlow Cost = %.4lfms\n", bestCost);
-  //printf("Input graph: end-to-end execution time =\n"
-  //       "%.8lf ms (average of 100 runs)\n", run());
+  const float initialCost = bestCost;
+  const int maxNumOps = inEdges.size();
   print_costs();
-
-  int counter = 0;
-  int maxNumOps = inEdges.size();
-  //long long start_time = microsecond_timer();
-  ofstream timer_fs;
-  timer_fs.open("timer.txt");
   printf("\n        ===== Start Cost-Based Backtracking Search =====\n");
-  while (!candidates.empty()) {
-    Graph *subGraph = candidates.top();
+  size_t phase = 0;
+  while (!candidates.empty() && schedule.next(phase)) {
+    Graph* subGraph = candidates.top();
     candidates.pop();
     if (subGraph->total_cost() < bestCost) {
       delete bestGraph;
-      bestCost = subGraph->total_cost();
       bestGraph = subGraph;
+      bestCost = subGraph->total_cost();
     }
-    if (counter > budget) {
-      // TODO: free all remaining candidates when budget exhausted 
-      break;
+    ++expanded[phase];
+    printf("        [%d] phase=%zu cost=%.4lf bestCost=%.4lf queue=%zu\n",
+           schedule.total() - 1, phase, subGraph->total_cost(), bestCost, candidates.size());
+    const std::vector<int>& selected = schedule.rules(phase);
+    const size_t count = selected.empty() ? xfers.size() : selected.size();
+    for (size_t j = 0; j < count; ++j) {
+      const size_t id = selected.empty() ? j : selected[j];
+      if (profiling) ++stats[phase][id].attempts;
+      const auto start = std::chrono::steady_clock::now();
+      xfers[id]->run(0, subGraph, candidates, hashmap, bestCost * alpha,
+                    2 * maxNumOps, profiling ? &stats[phase][id] : NULL);
+      if (profiling) stats[phase][id].seconds += std::chrono::duration<double>(
+          std::chrono::steady_clock::now() - start).count();
     }
-    if (counter % 1 == 0) {
-      printf("        [%d] cost = %.4lf bestCost = %.4lf candidates.size() = %zu\n", counter, subGraph->total_cost(), bestCost, candidates.size());
-      //timer_fs << microsecond_timer() - start_time << ", " << bestCost << std::endl;
-    }
-    counter ++;
-    for (size_t i = 0; i < xfers.size(); i++) {
-      //for (size_t j = 0; j < xfers[i]->srcOps.size(); j++) {
-      //  printf("srcOps[%zu]: type(%d)\n", j, xfers[i]->srcOps[j]->type);
-      //}
-      //for (size_t j = 0; j < xfers[i]->dstOps.size(); j++) {
-      //  printf("dstOps[%zu]: type(%d)\n", j, xfers[i]->dstOps[j]->type);
-      //}
-      xfers[i]->run(0, subGraph, candidates, hashmap, bestCost * alpha, 2 * maxNumOps);
-    }
-    if (bestGraph != subGraph) {
-      delete subGraph;
-    }
+    if (subGraph != bestGraph) delete subGraph;
   }
-  bestGraph = bestGraph->preprocess_weights();
+  // A better candidate generated by the final expansion still counts as found.
+  if (!candidates.empty() && candidates.top()->total_cost() < bestCost) {
+    delete bestGraph;
+    bestGraph = candidates.top();
+    bestCost = bestGraph->total_cost();
+  }
+  if (profiling) {
+    trace << "{\"schema_version\":1,\"rule_count\":" << xfers.size()
+          << ",\"initial_cost_ms\":" << initialCost
+          << ",\"best_search_cost_ms\":" << bestCost
+          << ",\"expansions\":" << schedule.total()
+          << ",\"queue_remaining\":" << candidates.size()
+          << ",\"stop_reason\":\"" << (candidates.empty() ? "queue_empty" : "budget")
+          << "\",\"phases\":[";
+    for (size_t p = 0; p < phase_budgets.size(); ++p) {
+      if (p) trace << ",";
+      trace << "{\"index\":" << p << ",\"budget\":" << phase_budgets[p]
+            << ",\"expansions\":" << expanded[p] << ",\"rules\":[";
+      for (size_t r = 0; r < xfers.size(); ++r) {
+        if (r) trace << ",";
+        const RewriteStats& v = stats[p][r];
+        trace << "{\"rule_index\":" << r << ",\"attempts\":" << v.attempts
+              << ",\"match_checks\":" << v.match_checks
+              << ",\"full_matches\":" << v.full_matches
+              << ",\"operator_rejections\":" << v.operator_rejections
+              << ",\"output_rejections\":" << v.output_rejections
+              << ",\"generated\":" << v.generated
+              << ",\"cycle_rejections\":" << v.cycle_rejections
+              << ",\"cost_rejections\":" << v.cost_rejections
+              << ",\"size_rejections\":" << v.size_rejections
+              << ",\"duplicates\":" << v.duplicates
+              << ",\"admitted\":" << v.admitted
+              << ",\"seconds\":" << v.seconds << "}";
+      }
+      trace << "]}";
+    }
+    trace << "]}\n";
+  }
+  while (!candidates.empty()) {
+    Graph* pending = candidates.top();
+    candidates.pop();
+    if (pending != bestGraph) delete pending;
+  }
+  Graph* processed = bestGraph->preprocess_weights();
+  delete bestGraph;
+  bestGraph = processed;
   printf("        ===== Finish Cost-Based Backtracking Search =====\n\n");
   //printf("bestCost = %.4lf\n", bestGraph->total_cost());
   //printf("Optimized graph: end-to-end execution time =\n");

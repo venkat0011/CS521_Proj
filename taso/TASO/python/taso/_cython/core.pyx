@@ -13,6 +13,7 @@
 # limitations under the License.
 #
 
+from libcpp.string cimport string
 from CCore cimport Model
 from CCore cimport Graph
 from CCore cimport Tensor
@@ -542,6 +543,15 @@ cdef class PyGraph:
         cdef Graph* new_graph = self.p_graph.optimize(alpha, budget, print_subst)
         graph = ctypes.cast(<unsigned long long>new_graph, ctypes.c_void_p)
         return PyGraph(graph)
+
+    def optimize_scheduled(self, float alpha, budgets, rule_lists,
+                           bool print_subst=False, trace_file=""):
+        cdef vector[int] c_budgets = budgets
+        cdef vector[vector[int]] c_rules = rule_lists
+        cdef string c_trace = str(trace_file).encode('utf-8')
+        cdef Graph* result = self.p_graph.optimize_scheduled(
+            alpha, c_budgets, c_rules, print_subst, c_trace)
+        return PyGraph(ctypes.cast(<unsigned long long>result, ctypes.c_void_p))
 
     def get_operator_list(self):
         cdef Op ops[4192]

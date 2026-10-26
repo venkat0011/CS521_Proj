@@ -49,3 +49,17 @@ the interpreter instead of relying on Colab's default version.
 The TASO runner creates its environment automatically. Tensat currently has
 only a Python scaffold, not an installed optimizer. Recreate environments on
 each machine rather than copying them. CUDA/compilers remain host dependencies.
+
+## First manually scheduled search
+
+```sh
+git pull --ff-only
+python3 taso/baseline/setup_and_run.py --experiment manual
+```
+
+This rebuilds TASO, then compares all-rule controls with the hand-written
+`taso/strategies/manual_conv.json` policy on a small branched CNN. It runs no
+LLM calls. See `taso/strategies/README.md` for execution semantics and limits.
+The runtime now keeps assertions enabled: upstream uses them for required
+parsing and matching operations, so prior Release smoke results are not a
+valid search-quality reference.

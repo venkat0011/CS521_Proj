@@ -17,6 +17,7 @@
 
 from libcpp.memory cimport shared_ptr
 from libcpp.vector cimport vector
+from libcpp.string cimport string
 from libcpp cimport bool
 
 cdef extern from "taso/ops.h" namespace "taso":
@@ -260,6 +261,10 @@ cdef extern from "taso/ops.h" namespace "taso":
         TensorHandle new_input(int ndim, const int* dims)
         TensorHandle new_weight(int ndim, const int* dims, const float* data)
         Graph* optimize(float alpha, int budget, bool print_subst)
+        Graph* optimize_scheduled(float alpha, const vector[int]& phase_budgets,
+                                 const vector[vector[int]]& phase_rules,
+                                 bool print_subst, const string& trace_file) except +
+
         int get_operator_list(Op* ops, size_t maxNumOps)
         int get_input_edges(Edge* edges, size_t guid)
         OpType get_operator_type(size_t guid)

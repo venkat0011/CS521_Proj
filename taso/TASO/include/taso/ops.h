@@ -641,6 +641,10 @@ public:
   // Helper Functions for Cython
   Op find_op_or_fail(size_t guid);
   Graph* optimize(float alpha, int budget, bool print_subst);
+  Graph* optimize_scheduled(float alpha, const std::vector<int>& phase_budgets,
+                            const std::vector<std::vector<int> >& phase_rules,
+                            bool print_subst, const std::string& trace_file);
+
   Graph* preprocess_weights(void);
   int get_operator_list(Op* opList, size_t maxNumOps);
   int get_input_edges(Edge* opList, size_t guid);

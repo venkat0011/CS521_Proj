@@ -1,4 +1,4 @@
-"""Tiny unmodified-TASO smoke run. This does not identify internal bottlenecks."""
+"""Tiny TASO smoke run using the all-rules policy. This does not identify internal bottlenecks."""
 import argparse
 from collections import Counter
 import json

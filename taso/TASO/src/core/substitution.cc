@@ -14,6 +14,9 @@
  */
 
 #include "taso/substitution.h"
+#ifdef NDEBUG
+#error "TASO matching requires assert side effects; compile the runtime with -UNDEBUG"
+#endif
 using namespace taso;
 
 GraphXfer* create_avg_pool_conv(Model* model)
@@ -1085,10 +1088,11 @@ void GraphXfer::unmatch(OpX* srcOp, Op op, Graph* graph)
 
 void GraphXfer::run(int depth, Graph* graph,
                     std::priority_queue<Graph*, std::vector<Graph*>, GraphCompare>& candidates,
-                    std::set<size_t>& hashmap, float threshold, int maxNumOps)
+                    std::set<size_t>& hashmap, float threshold, int maxNumOps, RewriteStats* stats)
 {
   //printf("run: depth(%d) srcOps.size(%zu) graph.size(%zu) candidates(%zu)\n", depth, srcOps.size(), graph->inEdges.size(), candidates.size());
   if (depth >= (int)srcOps.size()) {
+    if (stats) ++stats->full_matches;
     // Create dst operators
     bool pass = true;
     std::vector<OpX*>::const_iterator dstIt;
@@ -1097,7 +1101,10 @@ void GraphXfer::run(int depth, Graph* graph,
         OpX* dstOp = *dstIt;
         pass = (pass & create_new_operator(dstOp, dstOp->mapOp));
       }
-    if (!pass) return;
+    if (!pass) {
+      if (stats) ++stats->operator_rejections;
+      return;
+    }
     // Check that output tensors with external edges are mapped
     std::map<Op, OpX*, OpCompare>::const_iterator opIt;
     for (opIt = mappedOps.begin(); opIt != mappedOps.end(); opIt++) {
@@ -1110,40 +1117,48 @@ void GraphXfer::run(int depth, Graph* graph,
           srcTen.op = opIt->second;
           srcTen.idx = it->srcIdx;
           if (mappedOutputs.find(srcTen) == mappedOutputs.end()) {
-            pass = false;
+            if (stats) ++stats->output_rejections;
             return;
           }
         }
     }
     // Generate a new graph by applying xfer rule
     Graph* newGraph = create_new_graph(graph);
+    if (stats) ++stats->generated;
     // Check that the new graph should not have any loop
     if (newGraph->has_loop()) {
       //printf("Found a new graph with LOOP!!!!\n");
+      if (stats) ++stats->cycle_rejections;
       delete newGraph;
       return;
     }
     // TODO: remove me for better performance
     assert(newGraph->check_correctness());
-    if (newGraph->total_cost() < threshold && (int)newGraph->inEdges.size() < maxNumOps) {
-      if (hashmap.find(newGraph->hash()) == hashmap.end()) {
-        hashmap.insert(newGraph->hash());
-        candidates.push(newGraph);
-      }
-    } else {
+    if (!(newGraph->total_cost() < threshold)) {
+      if (stats) ++stats->cost_rejections;
       delete newGraph;
+    } else if ((int)newGraph->inEdges.size() >= maxNumOps) {
+      if (stats) ++stats->size_rejections;
+      delete newGraph;
+    } else if (!hashmap.insert(newGraph->hash()).second) {
+      if (stats) ++stats->duplicates;
+      delete newGraph;
+    } else {
+      candidates.push(newGraph);
+      if (stats) ++stats->admitted;
     }
   } else {
     OpX* srcOp = srcOps[depth];
     std::map<Op, std::set<Edge, EdgeCompare>, OpCompare>::const_iterator it;
     for (it = graph->inEdges.begin(); it != graph->inEdges.end(); it++) {
       //printf("can_match(%d)\n", can_match(srcOp, it->first, graph));
+      if (stats) ++stats->match_checks;
       if (can_match(srcOp, it->first, graph)
       && (mappedOps.find(it->first) == mappedOps.end())) {
         Op op = it->first;
         // Check mapOutput
         match(srcOp, op, graph);
-        run(depth + 1, graph, candidates, hashmap, threshold, maxNumOps);
+        run(depth + 1, graph, candidates, hashmap, threshold, maxNumOps, stats);
         unmatch(srcOp, op, graph);
       }
     }

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build vanilla TASO and run its tiny baseline from a Linux GPU terminal.
+"""Build TASO and run its tiny baseline or manual schedule from a GPU terminal.
 
 Usage: python3 taso/baseline/setup_and_run.py
 The first CUDA-12 attempt uses a private venv with cuDNN 8.9.7.29. This
@@ -158,13 +158,15 @@ class Runner:
         self.run([python, 'setup.py', 'install'], cwd=source / 'python')
         self.stage = 'import_check'
         self.run([python, '-c', 'import taso; print("TASO package:", taso.__file__); assert callable(taso.new_graph)'], cwd=root / 'taso' / 'baseline')
-        self.stage = 'baseline'
-        self.run([python, root / 'taso' / 'baseline' / 'run_baseline.py',
+        self.stage = args.experiment
+        script = 'run_manual_strategy.py' if args.experiment == 'manual' else 'run_baseline.py'
+        self.run([python, root / 'taso' / 'baseline' / script,
                   '--repo', source, '--out', self.results], cwd=root / 'taso' / 'baseline')
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--experiment', choices=['baseline', 'manual'], default='baseline')
     parser.add_argument('--out', type=Path, help='Results directory; defaults to baseline/results')
     parser.add_argument('--jobs', default='2', choices=['1', '2', '4'], help='Parallel compilation jobs')
     args = parser.parse_args()
@@ -172,7 +174,8 @@ def main():
     results = (args.out or root / 'taso' / 'baseline' / 'results').resolve()
     results.mkdir(parents=True, exist_ok=True)
     # Avoid reporting a previous successful run if the current setup fails early.
-    (results / 'baseline.json').unlink(missing_ok=True)
+    for filename in ('baseline.json', 'manual_summary.json'):
+        (results / filename).unlink(missing_ok=True)
     runner = Runner(results)
     report = {'status': 'started', 'platform': platform.platform(), 'python': sys.version,
               'started_utc': datetime.now(timezone.utc).isoformat()}

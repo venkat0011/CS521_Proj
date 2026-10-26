@@ -70,3 +70,10 @@ Order: GPU check -> select/install CUDA -> system build tools -> managed Python
 and venv -> packages -> TASO native library -> Python bindings -> baseline.
 CUDA 12 is the initial tested-for setup target, not a proven upper bound of
 TASO compatibility. Full GPU execution is still awaiting verification.
+
+## Manual search strategy experiment
+
+Run `python3 taso/baseline/setup_and_run.py --experiment manual` to rebuild
+and compare a hand-written fusion-first schedule with all-rule controls on a
+small branched convolution network. See `../strategies/README.md` for exact
+semantics, assertions/build correction, checks, and limitations.

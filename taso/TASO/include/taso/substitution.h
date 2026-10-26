@@ -137,6 +137,13 @@ public:
   }
 };
 
+struct RewriteStats {
+  size_t attempts = 0, match_checks = 0, full_matches = 0, operator_rejections = 0;
+  size_t output_rejections = 0, generated = 0, cycle_rejections = 0;
+  size_t cost_rejections = 0, size_rejections = 0, duplicates = 0, admitted = 0;
+  double seconds = 0;
+};
+
 class GraphXfer {
 public:
   GraphXfer(Model* _model);
@@ -196,7 +203,7 @@ public:
   bool map_output(TensorX src, TensorX dst);
   void run(int depth, Graph* graph,
            std::priority_queue<Graph*, std::vector<Graph*>, GraphCompare>&,
-           std::set<size_t>&, float threshold, int maxNumOps);
+           std::set<size_t>&, float threshold, int maxNumOps, RewriteStats* stats = NULL);
   Graph* create_new_graph(Graph* graph);
   bool create_new_operator(const OpX* opx, Op& op);
 

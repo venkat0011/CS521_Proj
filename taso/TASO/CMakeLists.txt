@@ -97,6 +97,11 @@ endif()
 
 add_library(taso_runtime SHARED ${TASO_SRCS})
 
+# Upstream performs required work inside assert expressions (e.g. parsing
+# rewrites and reading parameters). NDEBUG changes behavior, not just checks.
+target_compile_options(taso_runtime PRIVATE -UNDEBUG)
+
+
 set_target_properties(taso_runtime
   PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 

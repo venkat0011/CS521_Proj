@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "name": "conv_fusion_then_all",
+  "phases": [
+    {
+      "name": "try_conv_relu_fusion",
+      "rule_ids": ["builtin:000", "builtin:003", "builtin:006", "builtin:009"],
+      "expansion_budget": 2
+    },
+    {
+      "name": "explore_all_rules",
+      "rule_ids": "all",
+      "expansion_budget": 22
+    }
+  ]
+}

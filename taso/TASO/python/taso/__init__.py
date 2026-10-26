@@ -941,3 +941,14 @@ def optimize(graph, alpha = 1.0, budget = 1000, print_subst = False):
 
 # Current TASO Version
 __version__ = "0.1.0"
+
+
+def optimize_with_strategy(graph, strategy, alpha=1.05, print_subst=False, trace_file=""):
+    """Run a validated phase schedule with one persistent queue and exact budgets.
+
+    Consumes the graph, like the native optimizer: do not access the input graph
+    after this call. The returned graph is a separate preprocessed graph.
+    """
+    from .strategy import compile_strategy
+    budgets, rules = compile_strategy(strategy, alpha=alpha)
+    return graph.optimize_scheduled(alpha, budgets, rules, print_subst, trace_file)
