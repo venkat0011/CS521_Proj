@@ -44,13 +44,18 @@ def aggregate(trace):
     return counts
 
 
-def main():
+def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--repo', type=Path, default=Path(__file__).resolve().parents[1] / 'TASO')
     parser.add_argument('--out', type=Path, default=Path(__file__).resolve().parent / 'results')
     parser.add_argument('--strategy', type=Path, default=Path(__file__).resolve().parents[1] / 'strategies/manual_conv.json')
     parser.add_argument('--alpha', type=float, default=1.5,
                         help='Exploratory threshold held fixed across variants; not a tuned value')
-    args = parser.parse_args()
+    return parser.parse_args(argv)
+
+
+def main():
+    args = parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     report = {'status': 'started', 'alpha': args.alpha,
               'notes': ['No LLM calls; skipped rules are not replayed on expanded graphs.',
@@ -60,7 +65,7 @@ def main():
         import taso as ts
         from taso.strategy import compile_strategy
         import os
-        os.environ['TASO_HOME'] = str(Path(__file__).resolve().parents[1] / 'TASO')
+        os.environ['TASO_HOME'] = str(args.repo.resolve())
         manual = json.loads(args.strategy.read_text())
         budgets, compiled_rules = compile_strategy(manual, args.alpha)
         total = sum(budgets)
