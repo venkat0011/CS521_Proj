@@ -1,73 +1,112 @@
-# TASO LLM input pipeline
+# One-shot LLM strategy through OpenRouter
 
-The runtime entry point is `llm_strategy.request_strategy`. The extraction
-machinery is isolated in `prepare_context.py` and does not run during experiments.
+`prompt_template.txt` follows this structure:
 
-| File | Purpose | When used |
-|---|---|---|
-| prepare_context.py | Extract the registered rewrites and search source | Once per checkout change |
-| prepared/static_context.json | Saved rules and source | Read during each request |
-| graph_context.py | Read operators, shapes, edges and exposed attributes | Per workload |
-| llm_strategy.py | Build messages, call a supplied model adapter, validate rule IDs | Per strategy request |
+1. Actual model or graph-construction source.
+2. Live TASO graph: operators, tensor shapes, edges, exposed attributes, outputs.
+3. Registered rewrite catalog, with actual IDs and pattern/factory definitions.
+4. TASO search source.
+5. Fixed expansion budget, alpha, phase limit and execution semantics.
+6. Exact phase-schedule JSON output contract.
 
-## Prepare once
+The model produces the whole plan before search starts. It may choose one or
+several phases; phases do not involve model calls or feedback. This is a first
+one-shot experiment, not the later offline strategy-evolution loop across
+training graphs. Online feedback is not implemented.
 
-Run from this directory:
+## Inspect the prompt without an API call
+
+In the project directory of your Colab GPU terminal:
 
 ```sh
-python prepare_context.py
+git pull --ff-only
+python3 taso/baseline/setup_and_run.py --experiment llm --dry-run
 ```
 
-Paths default to the sibling `../TASO` checkout and local `prepared` folder.
-The current checkout has 151 registrations: 18 C++ and 133 protobuf entries.
-Those are rule instances, not necessarily unique identities or applicable
-transformations. Extraction targets the inspected registration layout; review
-its built-in expansion if changing registration. Regenerate the context after
-changing source or rewrite files.
+The runner builds TASO if necessary, constructs the small CNN, extracts the
+input and saves a prompt. The console prints the new run directory under
+`taso/baseline/results/llm/<run>/`. Open `request.txt` to read the exact input.
+No OpenRouter key is required for this mode.
 
-## Use in an experiment
+## Make one DeepSeek V4 Pro request and evaluate
 
-With this directory on Python's import path and TASO installed:
+Enter your key without displaying it or saving it in shell history:
 
-```python
-from llm_strategy import request_strategy
-
-# graph is the live TASO graph you constructed, before calling optimize.
-# call_llm is your provider-specific function: messages -> JSON response string.
-strategy = request_strategy(graph, call_llm, save_to="runs/first_request")
-print(strategy)
+```sh
+read -rsp "OpenRouter API key: " OPENROUTER_API_KEY
+export OPENROUTER_API_KEY
+printf '\n'
+python3 taso/baseline/setup_and_run.py --experiment llm
 ```
 
-The model/provider adapter is intentionally supplied by the experiment.
-No provider has been chosen or configured. There is no actual provider SDK
-integration yet. The callable receives normal system/user message dictionaries
-and must return the model's JSON text. Unknown/duplicate rule IDs and malformed
-responses are rejected. This adapter still returns its original rule-list format. It is not yet connected
-to the new phase-schedule API; see ../strategies/README.md for the manual executor.
+Default model ID: `deepseek/deepseek-v4-pro`.
+Change it via `--model MODEL_ID` or `OPENROUTER_MODEL`.
+The adapter makes one completion request, using JSON-object output mode and
+requiring provider support for requested parameters. It never automatically
+repairs a response or retries a paid call. This mode consumes API credits.
+Model listing: https://openrouter.ai/deepseek/deepseek-v4-pro
+API documentation: https://openrouter.ai/docs/api/reference/overview
+JSON outputs: https://openrouter.ai/docs/guides/features/structured-outputs
 
-To inspect the request before making an API call:
+## What gets evaluated
 
-```python
-from llm_strategy import build_messages
-messages, catalog = build_messages(graph)
-print(messages[0]["content"])
-print(len(messages[1]["content"]))
+The experiment uses B=24 expansions, alpha=1.5 and at most four phases. The
+model chooses phase count, rule selections and expansion allocations. The
+local validator requires budgets to sum to exactly B, checks exact fields,
+rejects unknown/duplicate IDs and duplicate JSON keys, then uses the same
+strategy compiler as `taso.optimize_with_strategy`.
+
+Once validated, the generated strategy is compared with a single all-rules
+phase on the same small CNN. No baseline search results or GPU measurements
+are given to the model. Final GPU timings are evaluation only. All variants
+reuse the operator-cost cache; these are smoke observations, not controlled
+speedup measurements. Numerical equivalence is not verified by this script.
+
+## Saved outputs
+
+Each run has its own directory, preserving earlier attempts:
+
+- request.txt / request.json: exact prompt and messages.
+- request_metadata.json: input hash/byte size and experiment settings.
+- api_request.json: model/parameters/messages, without authorization headers.
+- api_response.json: provider response including usage when returned.
+- inference_metadata.json: requested/returned model, provider, timing and usage.
+- strategy.json: validated schedule, only after successful validation.
+- baseline_trace.json / llm_trace.json: native search counters.
+- summary.json: preparation, evaluation results, or failure.
+
+To rerun a saved strategy without spending on another model request:
+
+```sh
+python3 taso/baseline/setup_and_run.py --experiment llm \
+  --strategy-file /content/CS521_Proj/taso/baseline/results/llm/RUN_ID/strategy.json
 ```
 
-## Current limits
+Incomplete/token-limited responses stop the run. Inspect the response; you can
+explicitly request a larger output limit using `--max-tokens 16384` for another
+paid attempt. Reasoning models may spend output tokens before returning JSON.
 
-- Live graph extraction requires a working TASO installation. Local checks use
-  a fake graph fixture and do not establish compatibility with a live runtime.
-- Existing getters omit fused activation and some other attributes. The graph
-  observation records this warning; it is not a lossless serialization. The
-  placeholder axes getter is omitted. Weight values are not sent.
-- The complete catalog and source context are large. Check the chosen model's
-  token budget before sending; bytes are not token counts.
-- Static data is loaded from disk for each request, but not re-extracted. It
-  must still be sent to a stateless provider unless a provider caching/session
-  mechanism is added.
-- The C++ phase executor now accepts manual schedules. This LLM adapter has
-  not yet been connected to that phase format or used for offline synthesis.
+## Code layout
 
-The old combined build_context.py and placeholder prompt/context files were
-replaced by these modules and the prepared static context.
+- prepare_context.py: extract static rules/source once; source hashes trigger
+  regeneration when the checkout changes.
+- graph_context.py: inspect the current graph.
+- prompt_template.txt: human-readable template.
+- llm_strategy.py: assemble messages and validate a returned phase schedule.
+- openrouter_client.py: standard-library HTTP adapter, key from environment.
+- ../baseline/run_llm_strategy.py: one-shot generation and evaluation entry point.
+
+The default model-source section is the real TASO CNN builder. We do not invent
+PyTorch source for a model that was built in TASO. An actual model source file
+can be supplied to the experiment using --model-source when running it directly
+with the TASO environment and native library paths configured.
+
+Existing public graph getters omit some attributes, including fused activation.
+These gaps are recorded in graph warnings. Weights are not sent. The source
+and full catalog make the prompt large; request_metadata.json reports bytes,
+not exact tokens. Input tokens are recorded from the real provider response.
+The input is sent on each stateless request; provider caching is not assumed.
+
+No live paid API request has been made by the coding agent. The provider
+adapter and validation have local fixture tests; real model behavior requires
+your first Colab request.

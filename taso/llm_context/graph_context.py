@@ -36,6 +36,13 @@ def graph_context(graph):
                           'shape': graph.get_input_dims(op, edge['dstIdx']),
                           'external_source': src not in ids})
     warnings.append('This uses existing public getters: fused convolution activation and other unexposed attributes are not a complete serialization. Add C++ getters before relying on those details for guidance.')
-    return {'status': 'live_taso_graph', 'nodes': list(external_nodes.values()) + nodes, 'edges': edges,
+    all_nodes = list(external_nodes.values()) + nodes
+    consumed = {(edge['source'], edge['source_output']) for edge in edges}
+    outputs = [{'node': node['id'], 'output_index': index}
+               for node in all_nodes for index in range(len(node['output_shapes']))
+               if (node['id'], index) not in consumed]
+    return {'status': 'live_taso_graph', 'nodes': all_nodes, 'edges': edges,
+            'outputs': outputs,
+            'output_identification': 'Inferred from unconsumed tensor ports; explicit model-output annotations are unavailable.',
             'estimated_cost_ms': graph.cost(), 'warnings': warnings,
             'weight_values_included': False}

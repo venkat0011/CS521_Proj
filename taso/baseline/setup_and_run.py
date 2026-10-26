@@ -159,17 +159,32 @@ class Runner:
         self.stage = 'import_check'
         self.run([python, '-c', 'import taso; print("TASO package:", taso.__file__); assert callable(taso.new_graph)'], cwd=root / 'taso' / 'baseline')
         self.stage = args.experiment
-        script = 'run_manual_strategy.py' if args.experiment == 'manual' else 'run_baseline.py'
-        self.run([python, root / 'taso' / 'baseline' / script,
-                  '--repo', source, '--out', self.results], cwd=root / 'taso' / 'baseline')
+        scripts = {'baseline': 'run_baseline.py', 'manual': 'run_manual_strategy.py', 'llm': 'run_llm_strategy.py'}
+        command = [python, root / 'taso' / 'baseline' / scripts[args.experiment],
+                   '--repo', source, '--out', self.results]
+        if args.experiment == 'llm':
+            command.extend(['--max-tokens', str(args.max_tokens)])
+            if args.model:
+                command.extend(['--model', args.model])
+            if args.dry_run:
+                command.append('--dry-run')
+            if args.strategy_file:
+                command.extend(['--strategy-file', args.strategy_file])
+        self.run(command, cwd=root / 'taso' / 'baseline')
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--experiment', choices=['baseline', 'manual'], default='baseline')
+    parser.add_argument('--experiment', choices=['baseline', 'manual', 'llm'], default='baseline')
+    parser.add_argument('--dry-run', action='store_true', help='LLM experiment: save prompt without calling provider')
+    parser.add_argument('--model', help='LLM experiment: OpenRouter model ID')
+    parser.add_argument('--max-tokens', type=int, default=8192, help='LLM experiment: output token limit')
+    parser.add_argument('--strategy-file', type=Path, help='LLM experiment: reuse a saved strategy without an API call')
     parser.add_argument('--out', type=Path, help='Results directory; defaults to baseline/results')
     parser.add_argument('--jobs', default='2', choices=['1', '2', '4'], help='Parallel compilation jobs')
     args = parser.parse_args()
+    if args.experiment != 'llm' and (args.dry_run or args.model or args.strategy_file):
+        parser.error('--dry-run, --model and --strategy-file require --experiment llm')
     root = Path(__file__).resolve().parents[2]
     results = (args.out or root / 'taso' / 'baseline' / 'results').resolve()
     results.mkdir(parents=True, exist_ok=True)

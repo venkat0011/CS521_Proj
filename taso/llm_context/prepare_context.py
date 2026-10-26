@@ -179,12 +179,16 @@ def prepare_context(repo, out):
     text = (repo / path).read_text()
     sources.append({'path': path, 'sha256': sha(text.encode()),
                     'purpose': 'Full rule factory, constructor and matching semantics', 'text': text})
+    input_files = ['src/core/ops.cc', 'src/core/substitution.cc',
+                   'include/taso/ops.h', 'include/taso/substitution.h',
+                   'src/core/rules.proto', 'graph_subst.pb']
     context = {
         'schema_version': 1,
+        'source_inputs_sha256': {name: sha((repo / name).read_bytes()) for name in input_files},
         'catalog': catalog,
         'source_context': sources,
         'limitations': [
-            'Rule IDs identify registrations in this checkout; unmodified TASO cannot execute a strategy.',
+            'Rule IDs identify registrations in this checkout; optimize_with_strategy executes validated phase schedules.',
             'Source includes search/rule code, not the whole repository.',
         ],
     }

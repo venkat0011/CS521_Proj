@@ -63,3 +63,14 @@ LLM calls. See `taso/strategies/README.md` for execution semantics and limits.
 The runtime now keeps assertions enabled: upstream uses them for required
 parsing and matching operations, so prior Release smoke results are not a
 valid search-quality reference.
+
+## First LLM-generated strategy
+
+```sh
+python3 taso/baseline/setup_and_run.py --experiment llm --dry-run
+```
+
+This saves the actual prompt without an API call. With `OPENROUTER_API_KEY`
+set in the terminal, omit `--dry-run` to generate one strategy using DeepSeek
+V4 Pro through OpenRouter and compare it with all-rule search. See
+`taso/llm_context/README.md` for key entry, saved outputs and strategy reuse.
