@@ -177,12 +177,12 @@ def experiment_command(root, args, python, results):
         if args.dry_run:
             command.append('--dry-run')
     if args.strategy_file:
-        command.extend(['--strategy-file', args.strategy_file])
+        command.extend(['--strategy-file', args.strategy_file.resolve()])
     if args.experiment == 'suite':
         if args.suite_config:
-            command.extend(['--config', args.suite_config])
+            command.extend(['--config', args.suite_config.resolve()])
         if args.batch_dir:
-            command.extend(['--batch-dir', args.batch_dir])
+            command.extend(['--batch-dir', args.batch_dir.resolve()])
         if args.retry_evaluation:
             command.append('--retry-evaluation')
     return command
