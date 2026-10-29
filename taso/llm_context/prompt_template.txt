@@ -46,6 +46,9 @@ Each phase has exactly name, rule_ids and expansion_budget.
 - schema_version must be 1.
 - Names must be nonempty strings; phase names can briefly describe their intent.
 - rule_ids is "all" or a nonempty list of unique IDs from the supplied catalog.
+- Copy the string from each rule's rule_id field, for example
+  ["builtin:000", "protobuf:0000"]. Do not return numeric taso_xfer_index values
+  such as [0, 18]; those are internal execution indices and are invalid here.
 - Every expansion_budget is a positive integer.
 - Phase budgets must sum to the exact total specified in the objective.
 - Use no more phases than the specified maximum. One phase is valid.
