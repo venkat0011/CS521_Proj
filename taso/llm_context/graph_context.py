@@ -19,6 +19,13 @@ def graph_context(graph):
                 warnings.append(f'{guid}: axes omitted; TASO getter contains a placeholder')
                 continue
             attrs[attr] = graph.get_operator_attr(op, attr)
+        if kind == 'Conv':
+            try:
+                mode = graph.get_operator_attr(op, 'activation')
+                attrs['fused_activation_mode'] = mode
+                attrs['fused_activation'] = {0: 'NONE', 1: 'SIGMOID', 2: 'RELU', 3: 'TANH'}.get(mode, 'UNKNOWN')
+            except (AssertionError, AttributeError):
+                warnings.append(f'{guid}: fused activation unavailable; rebuild the updated TASO bindings')
         nodes.append({'id': guid, 'type': kind, 'attributes': attrs,
                       'output_shapes': [graph.get_output_dims(op, i)
                                         for i in range(graph.get_num_outputs(op))]})
@@ -35,7 +42,7 @@ def graph_context(graph):
                           'destination': guid, 'destination_input': int(edge['dstIdx']),
                           'shape': graph.get_input_dims(op, edge['dstIdx']),
                           'external_source': src not in ids})
-    warnings.append('This uses existing public getters: fused convolution activation and other unexposed attributes are not a complete serialization. Add C++ getters before relying on those details for guidance.')
+    warnings.append('This uses public getters and is not a complete serialization; attributes without getters remain unavailable.')
     all_nodes = list(external_nodes.values()) + nodes
     consumed = {(edge['source'], edge['source_output']) for edge in edges}
     outputs = [{'node': node['id'], 'output_index': index}

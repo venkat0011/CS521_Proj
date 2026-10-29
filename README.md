@@ -2,6 +2,10 @@
 
 Investigating LLM-guided tensor graph search using TASO and, later, Tensat.
 
+The [four-network experiment](taso/benchmarks/README.md) compares TASO and LLM
+schedules with 100 graph expansions and five independent LLM trials per network.
+It saves every trial, full search traces, distribution statistics and dot/box plots.
+
 ## Layout
 
 - `taso/TASO/`: vendored upstream TASO source, tracked as regular files.

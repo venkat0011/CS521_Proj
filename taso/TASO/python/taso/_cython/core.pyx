@@ -653,6 +653,9 @@ cdef class PyGraph:
             return [padH // 2, padW // 2, padH - padH // 2, padW - padW // 2]
         elif attrname == 'group':
             return self.p_graph.get_operator_int_attr(op.guid, PM_GROUP)
+        elif attrname == 'activation':
+            # Used by graph context, independently of the ONNX attribute table.
+            return self.p_graph.get_operator_int_attr(op.guid, PM_ACTI)
         elif attrname == 'axis':
             return self.p_graph.get_operator_int_attr(op.guid, PM_AXIS)
         elif attrname == 'split':

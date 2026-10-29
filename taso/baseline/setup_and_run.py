@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Build TASO and run its tiny baseline or manual schedule from a GPU terminal.
+"""Build TASO and run a baseline, strategy comparison or four-network suite.
 
 Usage: python3 taso/baseline/setup_and_run.py
-The first CUDA-12 attempt uses a private venv with cuDNN 8.9.7.29. This
-legacy build has not yet been verified in Colab; failures are saved by stage.
+Uses a private venv with CUDA 12 and cuDNN 8.9.7.29. Failures are saved by stage.
 """
 import argparse
 from datetime import datetime, timezone
@@ -123,6 +122,8 @@ class Runner:
         environment = python.parent.parent
         self.env['PATH'] = str(environment / 'bin') + os.pathsep + self.env.get('PATH', '')
         self.run([python, '-m', 'pip', 'install', '-r', root / 'taso' / 'requirements-build.txt'])
+        if args.experiment == 'suite':
+            self.run([python, '-m', 'pip', 'install', '-r', root / 'taso/benchmarks/requirements.txt'])
         self.run([python, '-c', 'import sys; print("TASO Python:", sys.version)'])
         # Keep the notebook's/global Python environment untouched. CUDA toolkit
         # libraries already present on the host supply cuBLAS dependencies.
@@ -159,32 +160,58 @@ class Runner:
         self.stage = 'import_check'
         self.run([python, '-c', 'import taso; print("TASO package:", taso.__file__); assert callable(taso.new_graph)'], cwd=root / 'taso' / 'baseline')
         self.stage = args.experiment
-        scripts = {'baseline': 'run_baseline.py', 'manual': 'run_manual_strategy.py', 'llm': 'run_llm_strategy.py'}
-        command = [python, root / 'taso' / 'baseline' / scripts[args.experiment],
-                   '--repo', source, '--out', self.results]
-        if args.experiment == 'llm':
-            command.extend(['--max-tokens', str(args.max_tokens)])
-            if args.model:
-                command.extend(['--model', args.model])
-            if args.dry_run:
-                command.append('--dry-run')
-            if args.strategy_file:
-                command.extend(['--strategy-file', args.strategy_file])
+        command = experiment_command(root, args, python, self.results)
         self.run(command, cwd=root / 'taso' / 'baseline')
 
 
-def main():
+def experiment_command(root, args, python, results):
+    scripts = {'baseline': 'baseline/run_baseline.py', 'manual': 'baseline/run_manual_strategy.py',
+               'llm': 'baseline/run_llm_strategy.py', 'suite': 'benchmarks/run_suite.py'}
+    command = [python, root / 'taso' / scripts[args.experiment],
+               '--repo', root / 'taso/TASO', '--out', results]
+    if args.experiment in ('llm', 'suite'):
+        if args.max_tokens is not None or args.experiment == 'llm':
+            command.extend(['--max-tokens', str(args.max_tokens if args.max_tokens is not None else 8192)])
+        if args.model:
+            command.extend(['--model', args.model])
+        if args.dry_run:
+            command.append('--dry-run')
+    if args.strategy_file:
+        command.extend(['--strategy-file', args.strategy_file])
+    if args.experiment == 'suite':
+        if args.suite_config:
+            command.extend(['--config', args.suite_config])
+        if args.batch_dir:
+            command.extend(['--batch-dir', args.batch_dir])
+        if args.retry_evaluation:
+            command.append('--retry-evaluation')
+    return command
+
+
+def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--experiment', choices=['baseline', 'manual', 'llm'], default='baseline')
-    parser.add_argument('--dry-run', action='store_true', help='LLM experiment: save prompt without calling provider')
+    parser.add_argument('--experiment', choices=['baseline', 'manual', 'llm', 'suite'], default='baseline')
+    parser.add_argument('--dry-run', action='store_true', help='LLM/suite: prepare prompts without calling provider')
     parser.add_argument('--model', help='LLM experiment: OpenRouter model ID')
-    parser.add_argument('--max-tokens', type=int, default=8192, help='LLM experiment: output token limit')
+    parser.add_argument('--max-tokens', type=int, help='Output token limit; llm default 8192, suite default 32768')
     parser.add_argument('--strategy-file', type=Path, help='LLM experiment: reuse a saved strategy without an API call')
     parser.add_argument('--out', type=Path, help='Results directory; defaults to baseline/results')
     parser.add_argument('--jobs', default='2', choices=['1', '2', '4'], help='Parallel compilation jobs')
-    args = parser.parse_args()
-    if args.experiment != 'llm' and (args.dry_run or args.model or args.strategy_file):
-        parser.error('--dry-run, --model and --strategy-file require --experiment llm')
+    parser.add_argument('--suite-config', type=Path, help='Suite experiment configuration JSON')
+    parser.add_argument('--batch-dir', type=Path, help='Suite results folder; reuse to resume the same batch')
+    parser.add_argument('--retry-evaluation', action='store_true', help='Suite: retry GPU evaluation using saved strategies')
+    args = parser.parse_args(argv)
+    if args.experiment not in ('llm', 'suite') and (args.dry_run or args.model or args.max_tokens):
+        parser.error('--dry-run, --model and --max-tokens require --experiment llm or suite')
+    if args.strategy_file and args.experiment != 'llm':
+        parser.error('--strategy-file requires --experiment llm')
+    if args.experiment != 'suite' and (args.suite_config or args.batch_dir or args.retry_evaluation):
+        parser.error('--suite-config, --batch-dir and --retry-evaluation require --experiment suite')
+    return args
+
+
+def main():
+    args = parse_args()
     root = Path(__file__).resolve().parents[2]
     results = (args.out or root / 'taso' / 'baseline' / 'results').resolve()
     results.mkdir(parents=True, exist_ok=True)

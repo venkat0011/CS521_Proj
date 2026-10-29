@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "networks": ["squeezenet", "resnext50", "inceptionv3", "nasnet_a"],
+  "models": ["deepseek/deepseek-v4-pro"],
+  "trials": 5,
+  "budget": 100,
+  "alpha": 1.05,
+  "weight_seed": 521,
+  "max_phases": 4,
+  "max_tokens": 32768,
+  "temperature": 0.2,
+  "worker_timeout_seconds": 3600,
+  "budget_provenance": "Project choice: 100 exact graph expansions for every network and both policies. The TASO paper does not give per-network expansion budgets. Its alpha=1.05 is used here."
+}
