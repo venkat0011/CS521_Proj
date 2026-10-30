@@ -5,7 +5,7 @@ import inspect
 from pathlib import Path
 import textwrap
 
-NETWORKS = ('squeezenet', 'resnext50', 'inceptionv3', 'nasnet_a')
+NETWORKS = ('squeezenet', 'resnext50', 'inceptionv3')
 
 
 def squeezenet(ts, batch_size=1):
