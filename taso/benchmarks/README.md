@@ -1,20 +1,53 @@
-# Four-network, five-trial TASO experiment
+# Three-network, five-trial TASO experiment
 
 The default configuration compares all-rule TASO with a one-shot LLM schedule
-on SqueezeNet, ResNeXt-50, Inception-v3 and NASNet-A. Every search has an upper
+on SqueezeNet, ResNeXt-50 and Inception-v3. Every search has an upper
 bound of **100 whole-graph expansions**, and each LLM/network pair gets **five
 independent API requests**. Phases are preplanned; there is no online feedback.
-The default LLM is DeepSeek V4 Pro via OpenRouter: 20 requests for a complete
-four-network batch. Failures occupy their original trial slots.
+The default configuration uses four LLMs via OpenRouter: **60 requests** for a
+complete three-network batch (four LLMs × three networks × five trials). Failures occupy their original trial slots.
+
+## Model parameters
+
+`config.json` requests temperature `0.2` and reasoning effort `medium`, with an
+explicit `high` reasoning override for Kimi chosen for this experiment:
+
+| OpenRouter model ID | Temperature sent | Reasoning sent |
+|---|---|---|
+| `google/gemini-4-argon` | `0.2` | `medium` |
+| `anthropic/claude-opus-5.5` | omitted (provider default) | `medium` |
+| `openai/gpt-5.3-codex` | omitted (provider default) | `medium` |
+| `moonshotai/kimi-k3.1-pro` | omitted (provider default) | `high` |
+
+Capabilities were checked on 2026-10-31 against OpenRouter's
+[model catalog](https://openrouter.ai/api/v1/models) and per-model endpoint lists.
+The fixed profiles are in `llm_context/model_settings.py`; verify and update them
+before adding a different model. Unknown models or unsupported effort settings
+fail before GPU preparation or paid calls. The adapter uses OpenRouter's unified
+[`reasoning.effort`](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens)
+field and retains strict provider parameter routing. Provider availability can
+still change after this capability snapshot.
+
+The plan, `inference_metadata.json`, full trial records and `trials.csv` distinguish
+requested from sent temperature/reasoning and record omissions and overrides.
+An omitted temperature is **not** a claim that the provider used `0.2`. Reasoning
+labels are provider controls; equal labels do not imply equal compute across LLMs.
+`max_tokens` remains **32768**, including reasoning and visible output. There is
+no automatic retry or increase in this limit.
+
+Standalone legacy DeepSeek calls retain their existing default reasoning.
+If selecting DeepSeek in this suite, set an explicit reasoning override: `null`
+leaves reasoning at the provider default, while `high` requests high. Its current
+profile does not support `medium`.
 
 ## Run in the Colab GPU terminal
 
-From the project root, first prepare the four actual prompts and exercise each
+From the project root, first prepare the three actual prompts and exercise each
 network with all-rule TASO. This step makes no model calls:
 
 ```bash
 python3 taso/baseline/setup_and_run.py --experiment suite --dry-run \
-  --batch-dir taso/baseline/results/four_networks_100
+  --batch-dir taso/baseline/results/multi_model_100_v1
 ```
 
 The first invocation builds the updated TASO bindings and installs the plotting
@@ -23,7 +56,7 @@ dependency. Check the `prepared/<network>/worker_result.json` files. Then run:
 ```bash
 export OPENROUTER_API_KEY="your-key"
 python3 taso/baseline/setup_and_run.py --experiment suite \
-  --batch-dir taso/baseline/results/four_networks_100
+  --batch-dir taso/baseline/results/multi_model_100_v1
 ```
 
 Keep the key in your terminal environment. It is never written to result files.
@@ -33,9 +66,10 @@ calls. A failed GPU evaluation can explicitly be retried without another API cal
 
 ```bash
 python3 taso/baseline/setup_and_run.py --experiment suite --retry-evaluation \
-  --batch-dir taso/baseline/results/four_networks_100
+  --batch-dir taso/baseline/results/multi_model_100_v1
 ```
 
+Use a new batch directory for this update; do not resume an old DeepSeek/GPT batch.
 Configuration and source hashes are frozen for a batch. If either changes, use
 a new results directory. An interrupted API request without a saved valid
 strategy becomes a failed trial on resume; its request is never silently repeated.
@@ -81,7 +115,7 @@ After downloading the batch, regenerate its tables/figures without TASO or a GPU
 ```bash
 python3 -m pip install -r taso/benchmarks/requirements.txt
 python3 taso/benchmarks/run_suite.py --summarize \
-  --batch-dir taso/baseline/results/four_networks_100
+  --batch-dir taso/baseline/results/multi_model_100_v1
 ```
 
 Quartiles use linear interpolation at `(n-1)*p`. Standard deviation uses `n-1`
@@ -116,8 +150,6 @@ These are fixed TASO workload variants, not downloaded pretrained models:
   projection ReLU and absence of a classification head.
 - Inception-v3 reuses `TASO/examples/inceptionv3.py` construction at batch 1,
   including its 1x1 final pooling and absence of a classification head.
-- NASNet-A reuses `TASO/examples/nasnet_a.py`: 15 normal and 3 reduction cells,
-  without a classification head. This is not labeled NASNet-A Large/89M.
 
 Only graph-building definitions/statements are extracted from upstream scripts;
 their top-level optimizer/export calls never execute. The exact extracted source
@@ -129,6 +161,6 @@ sets alpha to 1.05 and reports searches taking under ten minutes. It does **not*
 specify per-network graph-expansion budgets. Our shared 100-expansion limit is
 a project choice, not a claimed replication of the paper's budget. The public
 examples use 100 for ResNeXt-50/NASNet-A and 30 for Inception-v3; this suite uses
-100 for all four as requested. The scheduled API enforces an exact upper bound,
+100 for all three as requested. The scheduled API enforces an exact upper bound,
 avoiding the legacy API's additional expansion. SqueezeNet and Inception-v3
 were not among the five architectures evaluated in TASO's original paper.

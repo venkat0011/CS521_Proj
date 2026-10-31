@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build TASO and run a baseline, strategy comparison or four-network suite.
+"""Build TASO and run a baseline, strategy comparison or three-network suite.
 
 Usage: python3 taso/baseline/setup_and_run.py
 Uses a private venv with CUDA 12 and cuDNN 8.9.7.29. Failures are saved by stage.

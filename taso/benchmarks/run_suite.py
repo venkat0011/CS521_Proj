@@ -19,6 +19,7 @@ import traceback
 HERE = Path(__file__).resolve().parent
 PROJECT = HERE.parents[1]
 sys.path.insert(0, str(HERE.parent / 'llm_context'))
+from model_settings import resolve_settings
 from networks import NETWORKS
 from results import write_exports
 from worker import save
@@ -58,6 +59,14 @@ def validate_config(cfg):
         value = cfg[key]
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not low <= value <= high:
             raise ValueError(f'Invalid {key}')
+    effort = cfg.get('reasoning_effort')
+    if effort is not None and not isinstance(effort, str):
+        raise ValueError('reasoning_effort must be a string or null')
+    overrides = cfg.get('reasoning_effort_overrides', {})
+    if not isinstance(overrides, dict) or any(
+            not isinstance(model, str) or (value is not None and not isinstance(value, str))
+            for model, value in overrides.items()):
+        raise ValueError('reasoning_effort_overrides must map model IDs to strings or null')
     return cfg
 
 
@@ -152,7 +161,9 @@ def run_trial(network, model, trial, batch, cfg, repo, retry_evaluation=False):
             # Persist intent BEFORE contacting the API to prevent duplicate charges after interruption.
             save(generation_path, {'status': 'started', 'model': model})
             client = OpenRouterClient(model, save_to=out, max_tokens=cfg['max_tokens'],
-                                      temperature=cfg['temperature'])
+                                      temperature=cfg['temperature'],
+                                      reasoning_effort=cfg.get('reasoning_effort'),
+                                      reasoning_effort_overrides=cfg.get('reasoning_effort_overrides'))
             raw = client(messages)
             save(out / 'response.json', {'raw_response': raw})
             strategy = validate_strategy(raw, catalog, cfg['budget'], cfg['max_phases'], cfg['alpha'])
@@ -198,7 +209,10 @@ def main(argv=None):
     validate_config(cfg)
     plan = {'networks': cfg['networks'], 'models': cfg['models'], 'trials_per_pair': cfg['trials'],
             'max_model_calls': len(cfg['networks']) * len(cfg['models']) * cfg['trials'],
-            'budget': cfg['budget'], 'alpha': cfg['alpha']}
+            'budget': cfg['budget'], 'alpha': cfg['alpha'],
+            'model_settings': {model: resolve_settings(
+                model, cfg['temperature'], cfg.get('reasoning_effort'),
+                cfg.get('reasoning_effort_overrides')) for model in cfg['models']}}
     print(json.dumps(plan, indent=2), flush=True)
     if args.plan_only:
         return 0

@@ -34,6 +34,12 @@ def flatten(report):
     row = {k: report.get(k) for k in ('network', 'model', 'trial', 'status', 'error', 'budget', 'alpha', 'model_calls')}
     inference = report.get('inference') or {}
     row['inference_seconds'] = inference.get('inference_seconds')
+    for key in ('requested_temperature', 'temperature', 'requested_reasoning_effort',
+                'reasoning_effort', 'reasoning_effort_override_applied', 'capabilities_checked_on'):
+        row[key] = inference.get(key)
+    row['omitted_parameters'] = json.dumps(inference.get('omitted_parameters', {}), sort_keys=True)
+    row['api_reasoning_tokens'] = ((inference.get('usage') or {}).get(
+        'completion_tokens_details') or {}).get('reasoning_tokens')
     row['provider'] = inference.get('provider')
     row['returned_model'] = inference.get('returned_model')
     for key in ('prompt_tokens', 'completion_tokens', 'total_tokens', 'cost'):
