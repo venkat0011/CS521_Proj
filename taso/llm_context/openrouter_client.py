@@ -6,18 +6,23 @@ import time
 import urllib.error
 import urllib.request
 
+from model_settings import resolve_settings
+
 DEFAULT_MODEL = 'deepseek/deepseek-v4-pro'
 ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions'
 
 
 class OpenRouterClient:
-    def __init__(self, model=None, save_to=None, max_tokens=8192, temperature=0.2, timeout=240):
+    def __init__(self, model=None, save_to=None, max_tokens=8192, temperature=0.2, timeout=240,
+                 reasoning_effort=None, reasoning_effort_overrides=None):
         self.model = model or os.environ.get('OPENROUTER_MODEL', DEFAULT_MODEL)
         self.save_to = Path(save_to) if save_to is not None else None
         if type(max_tokens) is not int or max_tokens < 1:
             raise ValueError('max_tokens must be positive')
         self.max_tokens = max_tokens
         self.temperature = temperature
+        self.settings = resolve_settings(self.model, temperature, reasoning_effort,
+                                         reasoning_effort_overrides)
         self.timeout = timeout
         self.metadata = None
         self.request_attempts = 0
@@ -27,9 +32,10 @@ class OpenRouterClient:
         if not key:
             raise ValueError('Set OPENROUTER_API_KEY in your terminal; do not put it in source files.')
         body = {'model': self.model, 'messages': messages, 'max_tokens': self.max_tokens,
-                'temperature': self.temperature, 'stream': False,
+                'stream': False,
                 'response_format': {'type': 'json_object'},
                 'provider': {'require_parameters': True}}
+        body.update(self.settings['parameters'])
         # Never persist authentication headers or the key.
         if self.save_to is not None:
             self.save_to.mkdir(parents=True, exist_ok=True)
@@ -49,7 +55,8 @@ class OpenRouterClient:
         self.metadata = {'requested_model': self.model, 'returned_model': result.get('model'),
                          'provider': result.get('provider'), 'usage': result.get('usage'),
                          'request_id': result.get('id'), 'inference_seconds': elapsed,
-                         'max_tokens': self.max_tokens, 'temperature': self.temperature}
+                         'max_tokens': self.max_tokens,
+                         **{k: v for k, v in self.settings.items() if k != 'parameters'}}
         if self.save_to is not None:
             (self.save_to / 'api_response.json').write_text(json.dumps(result, indent=2) + '\n')
             (self.save_to / 'inference_metadata.json').write_text(json.dumps(self.metadata, indent=2) + '\n')
