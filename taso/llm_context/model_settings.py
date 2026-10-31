@@ -8,6 +8,10 @@ import math
 
 CHECKED_ON = '2026-10-31'
 PROFILES = {
+    # Temperature is currently accepted by the Google AI Studio endpoint.
+    # require_parameters=True filters endpoints that cannot honor it.
+    'google/gemini-3.8-flash': {
+        'temperature': True, 'efforts': ('low', 'medium', 'high')},
     'google/gemini-4-argon': {
         'temperature': True, 'efforts': ('low', 'medium', 'high')},
     'anthropic/claude-opus-5.5': {
