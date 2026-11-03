@@ -19,6 +19,7 @@ PROJECT = HERE.parents[1]
 CONTEXT = PROJECT / 'taso' / 'llm_context'
 sys.path.insert(0, str(CONTEXT))
 sys.path.insert(0, str(HERE.parent))
+from token_limits import parse_max_tokens
 
 
 def parse_args(argv=None):
@@ -28,7 +29,8 @@ def parse_args(argv=None):
     parser.add_argument('--budget', type=int, default=24)
     parser.add_argument('--alpha', type=float, default=1.5)
     parser.add_argument('--max-phases', type=int, default=4)
-    parser.add_argument('--max-tokens', type=int, default=8192)
+    parser.add_argument('--max-tokens', type=parse_max_tokens, default=8192,
+                        help='Positive output cap or provider to omit max_tokens from API requests')
     parser.add_argument('--model', help='OpenRouter model ID; defaults to OPENROUTER_MODEL or DeepSeek V4 Pro')
     parser.add_argument('--model-source', type=Path, help='Optional real model source; default is the TASO graph builder')
     parser.add_argument('--dry-run', action='store_true')

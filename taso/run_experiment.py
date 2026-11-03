@@ -19,6 +19,9 @@ import traceback
 import tempfile
 import urllib.request
 
+sys.path.insert(0, str(Path(__file__).resolve().parent / 'llm_context'))
+from token_limits import parse_max_tokens
+
 
 class Runner:
     def __init__(self, results):
@@ -203,7 +206,8 @@ def parse_args(argv=None):
     parser.add_argument('--experiment', choices=['baseline', 'manual', 'llm', 'suite'], default='baseline')
     parser.add_argument('--dry-run', action='store_true', help='LLM/suite: prepare prompts without calling provider')
     parser.add_argument('--model', help='LLM experiment: OpenRouter model ID')
-    parser.add_argument('--max-tokens', type=int, help='Output token limit; llm default 8192, suite default 32768')
+    parser.add_argument('--max-tokens', type=parse_max_tokens,
+                        help='Output cap: positive integer or provider to omit our cap; defaults: llm 8192, suite 32768')
     parser.add_argument('--strategy-file', type=Path, help='LLM experiment: reuse a saved strategy without an API call')
     parser.add_argument('--out', type=Path, help='Output root; baseline defaults to taso/baseline/results, experiments to taso/results')
     parser.add_argument('--jobs', default='2', choices=['1', '2', '4'], help='Parallel compilation jobs')

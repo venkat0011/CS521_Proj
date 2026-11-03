@@ -1,5 +1,8 @@
 # Compact checkpoint prompts
 
+Output caps are independent of input compaction. See
+[output limits and per-call usage](TOKEN_LIMITS.md) for `--max-tokens provider`.
+
 `compact_checkpoint_prompt.py` generates `checkpoint_compact_v1` using only the
 Python standard library. It does not contact an LLM, tokenize with a proxy model,
 select a subset of rules or execute GPU search.

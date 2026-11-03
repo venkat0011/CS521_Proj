@@ -11,6 +11,7 @@ from compact_checkpoint_prompt import (PROMPT_VERSION, compact_static_context,
                                        build_checkpoint_messages)
 from model_settings import resolve_settings
 from openrouter_client import OpenRouterClient
+from token_limits import limit_mode
 
 
 def save(path, value):
@@ -53,6 +54,13 @@ class CheckpointStrategist:
                 'request_ids': [item['request_id'] for item in metadata if item.get('request_id')],
                 'inference_seconds': sum(item.get('inference_seconds', 0) or 0 for item in metadata),
                 'max_tokens': self.cfg['max_tokens'],
+                'output_token_limit_mode': limit_mode(self.cfg['max_tokens']),
+                'finish_reason_counts': dict(Counter(item['finish_reason'] for item in metadata
+                                                    if item.get('finish_reason'))),
+                'visible_completion_tokens': (
+                    sum(item['visible_completion_tokens'] for item in metadata)
+                    if metadata and all(type(item.get('visible_completion_tokens')) is int
+                                        for item in metadata) else None),
                 'prompt_version': PROMPT_VERSION,
                 'prompt_bytes_total': sum(r.get('prompt_compaction', {}).get('messages_utf8_bytes', 0)
                                           for r in self.records if r.get('model_calls', 0) > 0),

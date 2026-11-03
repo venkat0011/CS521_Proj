@@ -40,8 +40,11 @@ The plan, `inference_metadata.json`, full trial records and `trials.csv` disting
 requested from sent temperature/reasoning and record omissions and overrides.
 An omitted temperature is **not** a claim that the provider used `0.2`. Reasoning
 labels are provider controls; equal labels do not imply equal compute across LLMs.
-`max_tokens` remains **32768**, including reasoning and visible output. There is
-no automatic retry or increase in this limit.
+`max_tokens` defaults to **32768**, including reasoning and visible output.
+Use `--max-tokens provider` to omit the application's cap; provider defaults and
+model limits still apply. There is no automatic retry or increase in this limit.
+[Output limits and usage reports](../llm_context/TOKEN_LIMITS.md) describe the
+per-request `model_calls.csv` export, including failed checkpoint calls.
 
 Standalone legacy DeepSeek calls retain their existing default reasoning.
 The new suite explicitly requests `high` for DeepSeek; its profile does not
@@ -51,8 +54,8 @@ selected models; it does not import old trials or guarantee the old default effo
 
 The default one-shot mode makes one strategy request per trial.
 [Online checkpoint mode](CHECKPOINTS.md) is enabled with `--checkpoint-interval`
-and supports intervals such as 25, 10 and 5 expansions. Prompt compression is
-still a separate future experiment.
+and supports intervals such as 25, 10 and 5 expansions. Checkpoint requests use
+the [compact representation](../llm_context/COMPACTION.md).
 
 ## Run in the Colab GPU terminal
 

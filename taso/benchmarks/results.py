@@ -36,6 +36,15 @@ def flatten(report):
     row['inference_seconds'] = inference.get('inference_seconds')
     row['prompt_version'] = inference.get('prompt_version')
     row['prompt_bytes_total'] = inference.get('prompt_bytes_total')
+    row['max_tokens'] = inference.get('max_tokens')
+    row['output_token_limit_mode'] = inference.get('output_token_limit_mode')
+    row['api_visible_completion_tokens'] = inference.get('visible_completion_tokens')
+    reasons = inference.get('finish_reason_counts')
+    if reasons is None:
+        reason = inference.get('finish_reason')
+        reasons = {reason: 1} if reason else {}
+    row['api_finish_reason_counts'] = json.dumps(reasons, sort_keys=True)
+    row['api_length_completions'] = reasons.get('length', 0) if reasons else None
     for key in ('requested_temperature', 'temperature', 'requested_reasoning_effort',
                 'reasoning_effort', 'reasoning_effort_override_applied', 'capabilities_checked_on'):
         row[key] = inference.get(key)
@@ -66,9 +75,44 @@ def flatten(report):
     return row
 
 
+def model_call_rows(reports):
+    """One row per observed request, including failed checkpoint completions."""
+    rows = []
+    for report in reports:
+        evaluation = report.get('evaluation') or {}
+        decisions = evaluation.get('checkpoint_decisions', report.get('checkpoint_decisions', []))
+        is_checkpoint = report.get('search_mode', evaluation.get('search_mode')) == 'checkpoint'
+        calls = decisions if is_checkpoint else ([report] if report.get('model_calls') else [])
+        for call in calls:
+            if not call.get('model_calls'):
+                continue
+            info = call.get('inference') or {}
+            usage = info.get('usage') or {}
+            row = {k: report.get(k) for k in ('network', 'model', 'trial')}
+            row.update(trial_status=report.get('status'), status=call.get('status'),
+                       expansion=call.get('expansions'), error=call.get('error'),
+                       prompt_bytes=call.get('prompt_compaction', {}).get('messages_utf8_bytes'))
+            for key in ('request_id', 'provider', 'returned_model', 'inference_seconds', 'max_tokens',
+                        'output_token_limit_mode', 'finish_reason', 'native_finish_reason',
+                        'visible_completion_tokens', 'reasoning_effort', 'temperature'):
+                row[key] = info.get(key)
+            for key in ('prompt_tokens', 'completion_tokens', 'total_tokens', 'cost'):
+                row[key] = usage.get(key)
+            row['reasoning_tokens'] = (usage.get('completion_tokens_details') or {}).get('reasoning_tokens')
+            rows.append(row)
+    return rows
+
+
 def write_exports(directory, reports, plots=True):
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
+    reports = list(reports)
+    calls = model_call_rows(reports)
+    call_columns = sorted({key for row in calls for key in row}) or ['network', 'model', 'trial', 'status']
+    with (directory / 'model_calls.csv').open('w', newline='') as output:
+        writer = csv.DictWriter(output, fieldnames=call_columns)
+        writer.writeheader()
+        writer.writerows(calls)
     rows = [flatten(report) for report in reports]
     columns = sorted({key for row in rows for key in row})
     with (directory / 'trials.csv').open('w', newline='') as output:
@@ -106,6 +150,8 @@ def write_exports(directory, reports, plots=True):
                        'Ratios are paired LLM/baseline; below 1 is lower. Budgets are upper bounds.',
                        'Five trials describe observed variation; they do not establish significance.',
                        'Each trial requests a new one-shot strategy. Trial variation includes GPU cost-model noise.',
+                       'model_calls.csv records per-request usage and finish reasons, including failed checkpoint calls.',
+                       'A provider_default output limit omits our cap; provider defaults and model limits still apply.',
                        'Inference plus search excludes setup, graph construction and experimental warm-up.'],
              'groups': summaries}
     (directory / 'summary.json').write_text(json.dumps(stats, indent=2, allow_nan=False) + '\n')
@@ -121,6 +167,23 @@ def write_exports(directory, reports, plots=True):
     lines.extend(['', 'Below 1 means lower cost. Missing/failed trials are retained in the raw exports.', '',
                   'summary.json contains the complete distributions for every numeric metric: trial values,',
                   'mean, median, sample SD, min, max, Q1, Q3 and IQR.', ''])
+    if calls:
+        lines.extend(['', '## LLM token usage', '',
+                      'Includes returned usage from successful and failed requests. Missing usage stays blank in model_calls.csv.',
+                      '', '| Network | LLM | Requests observed | Length finishes | Prompt tokens | Output tokens | Reasoning tokens | Cost (USD) |',
+                      '|---|---|---:|---:|---:|---:|---:|---:|'])
+        for network, model in groups:
+            selected = [r for r in calls if r['network'] == network and r['model'] == model]
+            def total(key):
+                values = [r[key] for r in selected if isinstance(r.get(key), (int, float))]
+                return sum(values) if values else None
+            def show(value): return str(value) if value is not None else '—'
+            costs = total('cost')
+            count = sum(r['finish_reason'] == 'length' for r in selected)
+            cost_text = f'{costs:.6f}' if costs is not None else '—'
+            lines.append(f'| {network} | {model} | {len(selected)} | {count} | '
+                         f'{show(total("prompt_tokens"))} | {show(total("completion_tokens"))} | '
+                         f'{show(total("reasoning_tokens"))} | {cost_text} |')
     (directory / 'summary.md').write_text('\n'.join(lines))
     if plots and any(group['completed'] for group in summaries):
         plot_distributions(directory, summaries)

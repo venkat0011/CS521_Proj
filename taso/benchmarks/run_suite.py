@@ -23,6 +23,7 @@ from model_settings import resolve_settings
 from networks import NETWORKS
 from results import write_exports
 from worker import save
+from token_limits import limit_mode, normalize_max_tokens, parse_max_tokens
 
 
 def parse_args(argv=None):
@@ -32,7 +33,8 @@ def parse_args(argv=None):
     parser.add_argument('--out', type=Path, default=HERE.parent / 'results')
     parser.add_argument('--batch-dir', type=Path, help='Stable results folder; resume the same batch here')
     parser.add_argument('--model', action='append', help='Repeat to compare multiple OpenRouter model IDs')
-    parser.add_argument('--max-tokens', type=int)
+    parser.add_argument('--max-tokens', type=parse_max_tokens,
+                        help='Positive output cap or provider to omit max_tokens from API requests')
     parser.add_argument('--checkpoint-interval', type=int, nargs='?', const=25,
                         help='Enable online feedback every N graph expansions (e.g. 25, 10 or 5)')
     parser.add_argument('--dry-run', action='store_true')
@@ -52,9 +54,12 @@ def validate_config(cfg):
             raise ValueError(f'{key} must be a nonempty list of names')
         if len(set(values)) != len(values) or (choices and set(values) - set(choices)):
             raise ValueError(f'Duplicate or unknown {key}')
-    for key in ('trials', 'budget', 'max_phases', 'max_tokens', 'worker_timeout_seconds'):
+    for key in ('trials', 'budget', 'max_phases', 'worker_timeout_seconds'):
         if type(cfg[key]) is not int or not 1 <= cfg[key] <= 2**31 - 1:
             raise ValueError(f'{key} must be a positive integer <= INT_MAX')
+    if cfg['max_tokens'] is not None and type(cfg['max_tokens']) is not int:
+        raise ValueError('max_tokens must be a positive integer or null (provider default)')
+    normalize_max_tokens(cfg['max_tokens'])
     if type(cfg['weight_seed']) is not int or not 0 <= cfg['weight_seed'] < 2**32:
         raise ValueError('weight_seed must fit NumPy seed range')
     for key, low, high in [('alpha', 1, float('inf')), ('temperature', 0, 2)]:
@@ -250,7 +255,7 @@ def main(argv=None):
     if args.model:
         cfg['models'] = args.model
     if args.max_tokens is not None:
-        cfg['max_tokens'] = args.max_tokens
+        cfg['max_tokens'] = normalize_max_tokens(args.max_tokens)
     if args.checkpoint_interval is not None:
         cfg.update(search_mode='checkpoint', checkpoint_interval=args.checkpoint_interval)
     validate_config(cfg)
@@ -263,6 +268,8 @@ def main(argv=None):
             'max_model_calls_per_trial': calls_per_trial,
             'search_mode': cfg.get('search_mode', 'one_shot'),
             'checkpoint_interval': cfg.get('checkpoint_interval'),
+            'max_tokens': cfg['max_tokens'],
+            'output_token_limit_mode': limit_mode(cfg['max_tokens']),
             'budget': cfg['budget'], 'alpha': cfg['alpha'],
             'model_settings': {model: resolve_settings(
                 model, cfg['temperature'], cfg.get('reasoning_effort'),
