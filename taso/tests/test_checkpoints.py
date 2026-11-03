@@ -281,6 +281,7 @@ class CheckpointTests(unittest.TestCase):
             with patch.dict(sys.modules, {'taso': fake_ts}), patch.object(
                     worker, 'build_network', side_effect=lambda *a: (Graph(), 'actual source', {})), patch.object(
                     worker, 'environment', return_value={}), patch.object(
+                    worker, 'inspect_binding', return_value={'status': 'passed'}), patch.object(
                     run_llm_strategy, 'ensure_context', return_value=context), patch.object(
                     run_suite, 'source_hashes', return_value={'fixture': 'frozen'}), patch.object(
                     run_suite, 'run_worker', side_effect=launch), patch.object(

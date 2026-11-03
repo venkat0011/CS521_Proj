@@ -83,7 +83,8 @@ def model_directory(network, model):
 
 
 def source_hashes(repo):
-    files = sorted((HERE).glob('*.py')) + [HERE / 'config.json', HERE.parent / 'run_experiment.py']
+    files = sorted((HERE).glob('*.py')) + [HERE / 'config.json', HERE.parent / 'run_experiment.py', HERE.parent / 'verify_bindings.py',
+                                           HERE.parent / 'TASO/python/setup.py']
     files += sorted((HERE.parent / 'experiments').glob('*.py'))
     files += sorted((HERE.parent / 'llm_context').glob('*.py'))
     files += sorted((HERE.parent / 'llm_context').glob('*prompt_template.txt'))

@@ -42,7 +42,8 @@ def config_cython():
                 extra_compile_args=["-DUSE_CUDNN", "-std=c++11"],
                 extra_link_args=[],
                 language="c++"))
-        return cythonize(ret, compiler_directives={"language_level" : 3})
+        return cythonize(ret, force=os.environ.get("TASO_FORCE_CYTHON") == "1",
+                         compiler_directives={"language_level" : 3})
     except ImportError:
         print("WARNING: cython is not installed!!!")
         return []

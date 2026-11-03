@@ -42,6 +42,17 @@ class Runner:
         if code:
             raise RuntimeError(f'{self.stage}: command exited with code {code}')
 
+    def install_bindings(self, root, python, source):
+        # Force every layer: Cython -> C++ -> extension -> installed package.
+        # A successful import alone does not prove that the new .so was loaded.
+        self.stage = 'install_python_bindings'
+        self.env['TASO_FORCE_CYTHON'] = '1'
+        self.run([python, 'setup.py', 'build_ext', '--force', 'install', '--force'],
+                 cwd=source / 'python')
+        self.stage = 'import_check'
+        self.run([python, root / 'taso/verify_bindings.py', '--repo', source,
+                  '--out', self.results / 'bindings_check.json'], cwd=root / 'taso')
+
     def find_cuda12(self):
         candidates = []
         if self.env.get('CUDA_HOME'):
@@ -155,10 +166,7 @@ class Runner:
         self.run(command)
         self.run([environment / 'bin' / 'cmake', '--build', build, '-j', args.jobs])
         self.run([environment / 'bin' / 'cmake', '--install', build])
-        self.stage = 'install_python_bindings'
-        self.run([python, 'setup.py', 'install'], cwd=source / 'python')
-        self.stage = 'import_check'
-        self.run([python, '-c', 'import taso; print("TASO package:", taso.__file__); assert callable(taso.new_graph)'], cwd=root / 'taso')
+        self.install_bindings(root, python, source)
         self.stage = args.experiment
         command = experiment_command(root, args, python, self.results)
         self.run(command, cwd=root / 'taso')

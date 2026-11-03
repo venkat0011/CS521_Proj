@@ -14,6 +14,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / 'llm_context'))
 sys.path.insert(0, str(HERE.parent))
 from networks import build_network
+from verify_bindings import inspect_binding
 
 
 def save(path, value):
@@ -88,6 +89,11 @@ def main(argv=None):
         os.environ['TASO_HOME'] = str(args.repo.resolve())
         import taso as ts
         report['environment'] = environment(ts)
+        report['binding_check'] = inspect_binding(args.repo)
+        save(args.out / 'bindings_check.json', report['binding_check'])
+        if report['binding_check']['status'] != 'passed':
+            raise RuntimeError('Installed TASO binding verification failed: ' +
+                               '; '.join(report['binding_check']['errors']))
         baseline = all_rules(cfg['budget'])
         build = lambda: build_network(args.network, ts, args.repo, cfg['weight_seed'])
         if args.stage == 'prepare':

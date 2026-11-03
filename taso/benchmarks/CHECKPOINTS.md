@@ -144,3 +144,31 @@ in the experiment/benchmark code.
 Local checks exercise the actual C++ loop against a synthetic backend, generate
 and syntax-check the Cython bridge, and test the full Python dry-run/trial/resume
 path using mocked model calls. GPU execution must still be verified in Colab.
+
+## Confirming the rebuilt binding
+
+The setup runner now forces Cython regeneration, C++ extension compilation and
+installed-file replacement. It checks the actual installed module before starting
+the suite. Each GPU worker repeats the check before building its graph.
+
+`bindings_check.json` records the loaded `.so` path, its hash, source hash and
+operator-name mismatches. A correct binding reports `status: passed`,
+`type_20: Enlarge` and `type_21: MergeGConv`, with all 62 enum values covered.
+The suite will stop early if the checkout is missing the mapping fix, the loaded
+extension has old mappings, or another environment shadows the intended package.
+
+For the reported `Undefined type: 20` failure, an old traceback at core.pyx line
+631 identifies a pre-fix compiled module; the corrected getter is later in the
+source because mappings were added. Pull the fixes and use a fresh subdirectory
+for a dry run, rather than making the whole `taso/results/` folder a batch:
+
+```bash
+python3 taso/run_experiment.py --experiment suite --checkpoint-interval 25 \
+  --batch-dir /content/CS521_Proj/taso/results/checkpoint/binding_rebuild_25_v1 \
+  --dry-run
+```
+
+If the check fails, inspect `taso/results/bindings_check.json` (setup) or
+`<batch>/prepared/<network>/bindings_check.json` (worker) before running trials.
+The dry run makes no model requests. After it succeeds, remove `--dry-run` and
+reuse the same new batch directory. Existing experiment results stay in place.

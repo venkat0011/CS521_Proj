@@ -256,6 +256,7 @@ class BenchmarkTests(unittest.TestCase):
             worker.save(directory / 'strategy.json', {'schema_version': 1, 'name': 'llm', 'phases': [
                 {'name': 'all', 'rule_ids': 'all', 'expansion_budget': 100}]})
             with patch.dict(sys.modules, {'taso': fake_ts}), patch.object(worker, 'environment', return_value={}), patch.object(
+                    worker, 'inspect_binding', return_value={'status': 'passed'}), patch.object(
                     worker, 'build_network', side_effect=lambda *a: (Graph(), 'source', {'network': 'squeezenet'})):
                 code = worker.main(['--stage', 'evaluate', '--network', 'squeezenet', '--repo', str(ROOT / 'TASO'),
                                     '--out', temp, '--config', str(directory / 'config.json'),
