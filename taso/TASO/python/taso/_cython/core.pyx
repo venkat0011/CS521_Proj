@@ -161,6 +161,24 @@ op_table[OP_RESIZE] = "Resize"
 # op_table[OP_BROADCAST_ADD] = "BroadcastAdd"
 op_table[OP_BROADCAST_ADD] = "Add"
 
+# Search checkpoints inspect graphs before preprocess_weights folds temporary
+# weight transformations. Every native type therefore needs an introspection name,
+# including internal rewrite operators that are not ONNX operators.
+op_table[OP_ANY] = "Any"
+op_table[OP_LINEAR] = "Linear"
+op_table[OP_MUL] = "ScalarMul"
+op_table[OP_ENLARGE] = "Enlarge"
+op_table[OP_MERGE_GCONV] = "MergeGConv"
+op_table[OP_CONSTANT_IMM] = "ConstantIMM"
+op_table[OP_CONSTANT_ICONV] = "ConstantIConv"
+op_table[OP_CONSTANT_ONE] = "ConstantOne"
+op_table[OP_CONSTANT_POOL] = "ConstantPool"
+op_table[OP_LEAKYRELU] = "LeakyRelu"
+op_table[OP_PRELU] = "PRelu"
+op_table[OP_FUSE_CONV_BATCHNORM] = "FuseConvBatchNorm"
+op_table[OP_FUSE_CONV_BATCHNORM_ALPHA_VAR] = "FuseConvBatchNormAlphaVar"
+op_table[OP_FUSE_CONV_BATCHNORM_BIAS] = "FuseConvBatchNormBias"
+
 cdef class PyGraph:
     cdef Graph *p_graph #Hold a Graph instance
 

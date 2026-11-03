@@ -56,7 +56,7 @@ cdef extern from "taso/ops.h" namespace "taso":
         OP_EW_ADD
         OP_EW_MUL
         OP_MATMUL
-        OP_SCALARMUL
+        OP_MUL
         OP_ENLARGE
         OP_MERGE_GCONV
         OP_CONSTANT_IMM,
