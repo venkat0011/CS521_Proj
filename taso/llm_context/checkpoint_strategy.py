@@ -1,4 +1,4 @@
-"""One validated LLM policy per reached expansion checkpoint; no paid retries."""
+"""One validated policy per checkpoint, with optional bounded continuation."""
 from collections import Counter
 import hashlib
 import json
@@ -12,6 +12,7 @@ from compact_checkpoint_prompt import (PROMPT_VERSION, compact_static_context,
 from model_settings import resolve_settings
 from openrouter_client import OpenRouterClient
 from token_limits import limit_mode
+from checkpoint_completion import CheckpointCompletion, aggregate_attempts
 
 
 def save(path, value):
@@ -35,6 +36,12 @@ class CheckpointStrategist:
                                          cfg.get('reasoning_effort_overrides'))
 
     def aggregate(self):
+        if self.cfg.get('completion_policy') == 'continue_on_length':
+            attempts = [a for record in self.records for a in record.get('attempts', [])]
+            metadata = aggregate_attempts(attempts, self.model, self.cfg['max_tokens'], self.settings)
+            metadata.update(prompt_version=PROMPT_VERSION,
+                            checkpoints_reached=len(self.records), max_retries=self.cfg.get('max_retries', 3))
+            return metadata
         metadata = [record.get('inference') or {} for record in self.records]
         usage, reasoning = Counter(), 0
         for item in metadata:
@@ -126,10 +133,6 @@ class CheckpointStrategist:
             return strategy
         print(f'[checkpoint {consumed}/{budget}] {PROMPT_VERSION}: {metrics["messages_utf8_bytes"]} bytes; '
               f'requesting policy for next {chunk} expansions', flush=True)
-        client = self.client_factory(self.model, save_to=directory,
-            max_tokens=self.cfg['max_tokens'], temperature=self.cfg['temperature'],
-            reasoning_effort=self.cfg.get('reasoning_effort'),
-            reasoning_effort_overrides=self.cfg.get('reasoning_effort_overrides'))
         record = {'expansions': consumed, 'next_expansion_budget': chunk,
                   'best_search_cost_ms': progress['best_search_cost_ms'],
                   'queue_remaining': progress['queue_remaining'], 'status': 'started', 'model_calls': 1,
@@ -138,6 +141,20 @@ class CheckpointStrategist:
         # Persist intent BEFORE contacting the provider, including for interrupted requests.
         save(marker, record)
         save(self.out / 'checkpoints.json', self.records)
+        def update_attempts(completion):
+            record.update(attempts=completion.attempts, model_calls=completion.request_attempts,
+                          inference=completion.metadata)
+            save(marker, record)
+            save(self.out / 'checkpoints.json', self.records)
+            save(self.out / 'inference_metadata.json', self.aggregate())
+        if self.cfg.get('completion_policy') == 'continue_on_length':
+            client = CheckpointCompletion(self.model, self.cfg, directory,
+                client_factory=self.client_factory, on_update=update_attempts)
+        else:
+            client = self.client_factory(self.model, save_to=directory,
+                max_tokens=self.cfg['max_tokens'], temperature=self.cfg['temperature'],
+                reasoning_effort=self.cfg.get('reasoning_effort'),
+                reasoning_effort_overrides=self.cfg.get('reasoning_effort_overrides'))
         started = time.perf_counter()
         try:
             raw = client(messages)

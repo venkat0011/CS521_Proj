@@ -190,6 +190,8 @@ def experiment_command(root, args, python, results):
     if args.strategy_file:
         command.extend(['--strategy-file', args.strategy_file.resolve()])
     if args.experiment == 'suite':
+        if args.max_retries is not None:
+            command.extend(['--max-retries', str(args.max_retries)])
         if args.checkpoint_interval is not None:
             command.extend(['--checkpoint-interval', str(args.checkpoint_interval)])
         if args.suite_config:
@@ -207,7 +209,9 @@ def parse_args(argv=None):
     parser.add_argument('--dry-run', action='store_true', help='LLM/suite: prepare prompts without calling provider')
     parser.add_argument('--model', help='LLM experiment: OpenRouter model ID')
     parser.add_argument('--max-tokens', type=parse_max_tokens,
-                        help='Output cap: positive integer or provider to omit our cap; defaults: llm 8192, suite 32768')
+                        help='Output cap: integer, provider, or max for checkpoint continuation; defaults: llm 8192, suite 32768')
+    parser.add_argument('--max-retries', type=int,
+                        help='Suite checkpoint continuation: 0..3 extra API attempts per decision')
     parser.add_argument('--strategy-file', type=Path, help='LLM experiment: reuse a saved strategy without an API call')
     parser.add_argument('--out', type=Path, help='Output root; baseline defaults to taso/baseline/results, experiments to taso/results')
     parser.add_argument('--jobs', default='2', choices=['1', '2', '4'], help='Parallel compilation jobs')
@@ -225,6 +229,8 @@ def parse_args(argv=None):
         parser.error('--suite-config, --batch-dir, --checkpoint-interval and --retry-evaluation require --experiment suite')
     if args.checkpoint_interval is not None and args.checkpoint_interval <= 0:
         parser.error('--checkpoint-interval must be positive')
+    if args.max_retries is not None and (args.experiment != 'suite' or not 0 <= args.max_retries <= 3):
+        parser.error('--max-retries requires suite and a value from 0 to 3')
     return args
 
 

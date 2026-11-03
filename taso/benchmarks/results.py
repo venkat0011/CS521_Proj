@@ -45,6 +45,16 @@ def flatten(report):
         reasons = {reason: 1} if reason else {}
     row['api_finish_reason_counts'] = json.dumps(reasons, sort_keys=True)
     row['api_length_completions'] = reasons.get('length', 0) if reasons else None
+    for key in ('completion_policy', 'max_retries', 'checkpoints_reached',
+                'continuation_requests', 'provider_retries', 'retry_wait_seconds',
+                'usage_observations', 'usage_missing_attempts'):
+        row[key] = inference.get(key)
+    decisions = (report.get('evaluation') or {}).get('checkpoint_decisions', report.get('checkpoint_decisions', []))
+    row['recovered_checkpoints'] = sum(d.get('status') == 'completed' and len(d.get('attempts', [])) > 1
+                                        for d in decisions)
+    row['first_attempt_checkpoint_successes'] = sum(d.get('status') == 'completed' and len(d.get('attempts', [])) == 1
+                                                    for d in decisions)
+    row['failed_checkpoint_decisions'] = sum(d.get('status') == 'failed' for d in decisions)
     for key in ('requested_temperature', 'temperature', 'requested_reasoning_effort',
                 'reasoning_effort', 'reasoning_effort_override_applied', 'capabilities_checked_on'):
         row[key] = inference.get(key)
@@ -72,6 +82,9 @@ def flatten(report):
         seconds = row.get('inference_seconds')
         if seconds is not None:
             row['llm_inference_plus_search_seconds'] = seconds + row['llm_search_seconds']
+            if row.get('retry_wait_seconds') is not None:
+                row['llm_inference_search_and_retry_wait_seconds'] = (
+                    seconds + row['llm_search_seconds'] + row['retry_wait_seconds'])
     return row
 
 
@@ -83,19 +96,25 @@ def model_call_rows(reports):
         decisions = evaluation.get('checkpoint_decisions', report.get('checkpoint_decisions', []))
         is_checkpoint = report.get('search_mode', evaluation.get('search_mode')) == 'checkpoint'
         calls = decisions if is_checkpoint else ([report] if report.get('model_calls') else [])
-        for call in calls:
+        expanded = [(call, attempt) for call in calls for attempt in (call.get('attempts') or [call])]
+        for checkpoint, call in expanded:
             if not call.get('model_calls'):
                 continue
             info = call.get('inference') or {}
             usage = info.get('usage') or {}
             row = {k: report.get(k) for k in ('network', 'model', 'trial')}
             row.update(trial_status=report.get('status'), status=call.get('status'),
-                       expansion=call.get('expansions'), error=call.get('error'),
-                       prompt_bytes=call.get('prompt_compaction', {}).get('messages_utf8_bytes'))
+                       expansion=checkpoint.get('expansions'), checkpoint_status=checkpoint.get('status'),
+                       attempt=call.get('attempt', 1), action=call.get('action', 'initial'),
+                       replay_mode=call.get('replay_mode'), estimated_input_tokens=call.get('estimated_input_tokens'),
+                       error=call.get('error'),
+                       prompt_bytes=call.get('prompt_bytes', checkpoint.get('prompt_compaction', {}).get('messages_utf8_bytes')))
             for key in ('request_id', 'provider', 'returned_model', 'inference_seconds', 'max_tokens',
                         'output_token_limit_mode', 'finish_reason', 'native_finish_reason',
                         'visible_completion_tokens', 'reasoning_effort', 'temperature'):
                 row[key] = info.get(key)
+            if call.get('max_tokens') is not None:
+                row['max_tokens'] = call['max_tokens']
             for key in ('prompt_tokens', 'completion_tokens', 'total_tokens', 'cost'):
                 row[key] = usage.get(key)
             row['reasoning_tokens'] = (usage.get('completion_tokens_details') or {}).get('reasoning_tokens')
@@ -149,7 +168,7 @@ def write_exports(directory, reports, plots=True):
              'notes': ['All planned trial slots appear in trials.csv and trials.jsonl, including failures.',
                        'Ratios are paired LLM/baseline; below 1 is lower. Budgets are upper bounds.',
                        'Five trials describe observed variation; they do not establish significance.',
-                       'Each trial requests a new one-shot strategy. Trial variation includes GPU cost-model noise.',
+                       'Each trial obtains independent policies. Checkpoint mode can make multiple attempts per decision; all returned usage is included.',
                        'model_calls.csv records per-request usage and finish reasons, including failed checkpoint calls.',
                        'A provider_default output limit omits our cap; provider defaults and model limits still apply.',
                        'Inference plus search excludes setup, graph construction and experimental warm-up.'],

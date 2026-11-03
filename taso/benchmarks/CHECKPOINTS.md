@@ -1,5 +1,9 @@
 # Online checkpoints by graph-expansion budget
 
+For maximum output allowances and up to three follow-ups after a truncated
+decision, use the separate [bounded continuation preset](../llm_context/CONTINUATION.md).
+The call counts and examples below describe the original no-retry configuration.
+
 The suite supports one-shot and checkpoint guidance. Without
 `--checkpoint-interval`, the existing one-shot path is used. Supplying the flag
 without a value selects 25; explicit values such as 10 and 5 are also supported.

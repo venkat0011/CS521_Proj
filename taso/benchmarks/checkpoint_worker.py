@@ -19,7 +19,10 @@ def evaluate_checkpoint_trial(ts, build, cfg, args, report):
         args.prepared / 'static_context.json',
         (args.prepared / 'model_source.py').read_text(), args.out)
     report.update(search_mode='checkpoint', checkpoint_interval=interval, prompt_version=PROMPT_VERSION,
-        max_model_calls=(budget - 1) // interval + 1,
+        max_checkpoint_decisions=(budget - 1) // interval + 1,
+        max_model_calls=((budget - 1) // interval + 1) * (
+            cfg.get('max_retries', 3) + 1 if cfg.get('completion_policy') else 1),
+        completion_policy=cfg.get('completion_policy'), max_retries=cfg.get('max_retries', 0),
         evaluation_order=order, warmup_searches_per_policy=1,
         notes=[
             'Two discarded all-rule warm-up searches, one per policy slot; no model calls during warm-up.',
@@ -31,6 +34,8 @@ def evaluate_checkpoint_trial(ts, build, cfg, args, report):
             'Feedback contains estimated costs and rewrite statistics, not GPU runtime measurements.',
             'One final run_time observation per variant; this does not check numerical equivalence.',
         ])
+    if cfg.get('completion_policy'):
+        report['notes'].append('Length continuations and transient-provider retries share the configured follow-up limit per checkpoint; all attempt usage is included.')
     try:
         started = time.perf_counter()
         for name in order:

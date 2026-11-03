@@ -35,6 +35,8 @@ def parse_args(argv=None):
     parser.add_argument('--model', action='append', help='Repeat to compare multiple OpenRouter model IDs')
     parser.add_argument('--max-tokens', type=parse_max_tokens,
                         help='Positive output cap or provider to omit max_tokens from API requests')
+    parser.add_argument('--max-retries', type=int,
+                        help='Checkpoint continuation: 0..3 extra API attempts per decision; enables bounded continuation')
     parser.add_argument('--checkpoint-interval', type=int, nargs='?', const=25,
                         help='Enable online feedback every N graph expansions (e.g. 25, 10 or 5)')
     parser.add_argument('--dry-run', action='store_true')
@@ -57,9 +59,28 @@ def validate_config(cfg):
     for key in ('trials', 'budget', 'max_phases', 'worker_timeout_seconds'):
         if type(cfg[key]) is not int or not 1 <= cfg[key] <= 2**31 - 1:
             raise ValueError(f'{key} must be a positive integer <= INT_MAX')
-    if cfg['max_tokens'] is not None and type(cfg['max_tokens']) is not int:
+    if cfg['max_tokens'] is not None and cfg['max_tokens'] != 'max' and type(cfg['max_tokens']) is not int:
         raise ValueError('max_tokens must be a positive integer or null (provider default)')
     normalize_max_tokens(cfg['max_tokens'])
+    policy = cfg.get('completion_policy')
+    if policy not in (None, 'continue_on_length'):
+        raise ValueError('Unknown completion_policy')
+    if policy:
+        from checkpoint_completion import MODEL_LIMITS
+        if cfg.get('search_mode') != 'checkpoint':
+            raise ValueError('Continuation is supported only in checkpoint mode')
+        if cfg['max_tokens'] is None:
+            raise ValueError('Continuation requires an explicit cap or max; provider defaults cannot guard context')
+        if set(cfg['models']) - set(MODEL_LIMITS):
+            raise ValueError('No checked continuation limits for a configured model')
+        retries = cfg.get('max_retries', 3)
+        if type(retries) is not int or not 0 <= retries <= 3:
+            raise ValueError('max_retries must be an integer from 0 to 3')
+        timeout = cfg.get('request_timeout_seconds', 240)
+        if type(timeout) is not int or not 1 <= timeout <= 3600:
+            raise ValueError('request_timeout_seconds must be an integer from 1 to 3600')
+    elif cfg['max_tokens'] == 'max' or cfg.get('max_retries') is not None:
+        raise ValueError('max and max_retries require checkpoint continuation')
     if type(cfg['weight_seed']) is not int or not 0 <= cfg['weight_seed'] < 2**32:
         raise ValueError('weight_seed must fit NumPy seed range')
     for key, low, high in [('alpha', 1, float('inf')), ('temperature', 0, 2)]:
@@ -258,14 +279,22 @@ def main(argv=None):
         cfg['max_tokens'] = normalize_max_tokens(args.max_tokens)
     if args.checkpoint_interval is not None:
         cfg.update(search_mode='checkpoint', checkpoint_interval=args.checkpoint_interval)
+    if args.max_retries is not None:
+        cfg.update(completion_policy='continue_on_length', max_retries=args.max_retries)
     validate_config(cfg)
     if cfg.get('search_mode') == 'checkpoint' and args.retry_evaluation:
         raise ValueError('--retry-evaluation cannot resume in-memory checkpoint trials; use a new batch')
     calls_per_trial = ((cfg['budget'] - 1) // cfg['checkpoint_interval'] + 1
                        if cfg.get('search_mode') == 'checkpoint' else 1)
+    decisions_per_trial = calls_per_trial
+    if cfg.get('completion_policy'):
+        calls_per_trial *= cfg.get('max_retries', 3) + 1
     plan = {'networks': cfg['networks'], 'models': cfg['models'], 'trials_per_pair': cfg['trials'],
             'max_model_calls': len(cfg['networks']) * len(cfg['models']) * cfg['trials'] * calls_per_trial,
             'max_model_calls_per_trial': calls_per_trial,
+            'max_checkpoint_decisions_per_trial': decisions_per_trial,
+            'max_retries_per_checkpoint': cfg.get('max_retries', 0),
+            'completion_policy': cfg.get('completion_policy'),
             'search_mode': cfg.get('search_mode', 'one_shot'),
             'checkpoint_interval': cfg.get('checkpoint_interval'),
             'max_tokens': cfg['max_tokens'],
@@ -274,6 +303,10 @@ def main(argv=None):
             'model_settings': {model: resolve_settings(
                 model, cfg['temperature'], cfg.get('reasoning_effort'),
                 cfg.get('reasoning_effort_overrides')) for model in cfg['models']}}
+    if cfg.get('completion_policy'):
+        from checkpoint_completion import CHECKED_ON, MODEL_LIMITS
+        plan['endpoint_limits_checked_on'] = CHECKED_ON
+        plan['endpoint_limits'] = {model: MODEL_LIMITS[model] for model in cfg['models']}
     print(json.dumps(plan, indent=2), flush=True)
     if args.plan_only:
         return 0
