@@ -1,5 +1,9 @@
 # Online checkpoints by graph-expansion budget
 
+The optional [GPU-feedback comparison](GPU_FEEDBACK.md) adds `--gpu-feedback
+off|on|both` and read-only reuse of completed plain-checkpoint results. Its
+interval and feedback-mode columns are kept separate in combined distributions.
+
 For maximum output allowances and up to three follow-ups after a truncated, missing or invalid
 strategy, use the separate [bounded continuation preset](../llm_context/CONTINUATION.md).
 The call counts and examples below describe the original no-retry configuration.

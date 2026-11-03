@@ -68,6 +68,10 @@ void* Model::allocate_memory(size_t size, const DATATYPE* data_initial) {
   return ptr;
 }
 
+void Model::release_memory(void* ptr) {
+  if (ptr != nullptr && ptr != (void*)0x1) free(ptr);
+}
+
 bool Model::copy_memory(DATATYPE* dst, const DATATYPE* src, size_t size) {
   memcpy(dst, src, size);
   return true;

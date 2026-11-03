@@ -53,6 +53,8 @@ their original batches. This new configuration starts fresh trial slots for all
 selected models; it does not import old trials or guarantee the old default effort.
 
 The default one-shot mode makes one strategy request per trial.
+For optional measured feedback, condition comparisons and reuse of completed
+checkpoint results without new calls, see [GPU feedback](GPU_FEEDBACK.md).
 The separate [checkpoint continuation preset](../llm_context/CONTINUATION.md)
 starts with model-specific maximum allowances and bounds follow-ups at three per
 checkpoint. It lets OpenRouter select providers, retries missing/invalid strategies within the same three-follow-up limit, records all attempts, and leaves the default configuration unchanged.

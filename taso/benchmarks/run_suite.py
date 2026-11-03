@@ -39,6 +39,12 @@ def parse_args(argv=None):
                         help='Checkpoint continuation: 0..3 extra API attempts per decision; enables bounded continuation')
     parser.add_argument('--checkpoint-interval', type=int, nargs='?', const=25,
                         help='Enable online feedback every N graph expansions (e.g. 25, 10 or 5)')
+    parser.add_argument('--gpu-feedback', choices=['off', 'on', 'both'],
+                        help='Compare checkpoint modes; on uses GPU feedback, both runs both conditions')
+    parser.add_argument('--reuse-checkpoint-batch', type=Path,
+                        help='Import prior checkpoint results without executing that condition again')
+    parser.add_argument('--min-successful-trials', type=int,
+                        help='Comparison success threshold per network/model/condition; all attempts remain reported')
     parser.add_argument('--dry-run', action='store_true')
     parser.add_argument('--plan-only', action='store_true')
     parser.add_argument('--summarize', action='store_true', help='Rebuild tables/plots from saved trial files')
@@ -101,6 +107,13 @@ def validate_config(cfg):
         interval = cfg.get('checkpoint_interval')
         if type(interval) is not int or not 1 <= interval <= 2**31 - 1:
             raise ValueError('checkpoint_interval must be a positive integer <= INT_MAX')
+    if type(cfg.get('gpu_feedback', False)) is not bool:
+        raise ValueError('gpu_feedback must be a boolean')
+    if cfg.get('gpu_feedback', False) and cfg.get('search_mode') != 'checkpoint':
+        raise ValueError('GPU feedback requires checkpoint mode')
+    repeats = cfg.get('gpu_feedback_repeats', 3)
+    if type(repeats) is not int or not 1 <= repeats <= 10:
+        raise ValueError('gpu_feedback_repeats must be between 1 and 10')
     return cfg
 
 
@@ -115,9 +128,9 @@ def source_hashes(repo):
     files += sorted((HERE.parent / 'llm_context').glob('*.py'))
     files += sorted((HERE.parent / 'llm_context').glob('*prompt_template.txt'))
     hashes = {str(path.relative_to(PROJECT)): hashlib.sha256(path.read_bytes()).hexdigest() for path in files}
-    for folder in ('examples', 'src/core', 'include/taso', 'python/taso'):
+    for folder in ('examples', 'src/core', 'src/cudnn', 'src/dnnl', 'include/taso', 'python/taso'):
         for path in sorted((repo / folder).rglob('*')):
-            if path.is_file() and path.suffix in ('.py', '.pyx', '.pxd', '.cc', '.h', '.proto'):
+            if path.is_file() and path.suffix in ('.py', '.pyx', '.pxd', '.cc', '.cu', '.h', '.proto'):
                 hashes['taso/TASO/' + str(path.relative_to(repo))] = hashlib.sha256(path.read_bytes()).hexdigest()
     hashes['taso/TASO/graph_subst.pb'] = hashlib.sha256((repo / 'graph_subst.pb').read_bytes()).hexdigest()
     return hashes
@@ -198,6 +211,8 @@ def run_trial(network, model, trial, batch, cfg, repo, retry_evaluation=False):
         if inference_path.exists():
             inference = json.loads(inference_path.read_text())
         report.update(evaluation=worker, inference=inference,
+                      feedback_mode='checkpoint_gpu' if cfg.get('gpu_feedback', False) else 'checkpoint',
+                      gpu_feedback=cfg.get('gpu_feedback', False),
                       model_calls=max(worker.get('model_calls', 0), sum(r.get('model_calls', 0) for r in decisions)),
                       status='completed' if worker.get('status') == 'completed' else 'failed_evaluation')
         report['interrupted_attempts'] = sum(r.get('status') == 'started' for r in decisions)
@@ -263,16 +278,17 @@ def run_trial(network, model, trial, batch, cfg, repo, retry_evaluation=False):
     return report
 
 
-def main(argv=None):
-    args = parse_args(argv)
-    if args.summarize:
-        if args.batch_dir is None:
-            raise ValueError('--summarize requires --batch-dir')
-        cfg = validate_config(json.loads((args.batch_dir / 'config.json').read_text()))
-        write_exports(args.batch_dir, trial_reports(args.batch_dir, cfg))
-        print(f'Updated distributions: {args.batch_dir}')
-        return 0
+def configuration(args):
     cfg = json.loads(args.config.read_text())
+    if cfg.get('comparison_schema_version') == 1:
+        saved = cfg
+        cfg = saved['base_config']
+        if args.gpu_feedback is None:
+            args.gpu_feedback = 'both' if 'checkpoint' in saved['arms'] else 'on'
+        if args.reuse_checkpoint_batch is None and saved.get('reuse_checkpoint_batch'):
+            args.reuse_checkpoint_batch = Path(saved['reuse_checkpoint_batch'])
+        if args.min_successful_trials is None:
+            args.min_successful_trials = saved['minimum_successful_trials']
     if args.model:
         cfg['models'] = args.model
     if args.max_tokens is not None:
@@ -281,7 +297,29 @@ def main(argv=None):
         cfg.update(search_mode='checkpoint', checkpoint_interval=args.checkpoint_interval)
     if args.max_retries is not None:
         cfg.update(completion_policy='continue_on_length', max_retries=args.max_retries)
-    validate_config(cfg)
+    if args.gpu_feedback == 'off':
+        cfg['gpu_feedback'] = False
+    return validate_config(cfg)
+
+
+def main(argv=None):
+    args = parse_args(argv)
+    if args.summarize:
+        if args.batch_dir is None:
+            raise ValueError('--summarize requires --batch-dir')
+        saved = json.loads((args.batch_dir / 'config.json').read_text())
+        if saved.get('comparison_schema_version') == 1:
+            from feedback_comparison import summarize_comparison
+            summarize_comparison(args.batch_dir)
+            return 0
+        cfg = validate_config(saved)
+        write_exports(args.batch_dir, trial_reports(args.batch_dir, cfg))
+        print(f'Updated distributions: {args.batch_dir}')
+        return 0
+    cfg = configuration(args)
+    if args.gpu_feedback in ('on', 'both') or args.reuse_checkpoint_batch is not None:
+        from feedback_comparison import run_comparison
+        return run_comparison(args, cfg)
     if cfg.get('search_mode') == 'checkpoint' and args.retry_evaluation:
         raise ValueError('--retry-evaluation cannot resume in-memory checkpoint trials; use a new batch')
     calls_per_trial = ((cfg['budget'] - 1) // cfg['checkpoint_interval'] + 1
@@ -297,6 +335,7 @@ def main(argv=None):
             'completion_policy': cfg.get('completion_policy'),
             'search_mode': cfg.get('search_mode', 'one_shot'),
             'checkpoint_interval': cfg.get('checkpoint_interval'),
+            'gpu_feedback': cfg.get('gpu_feedback', False),
             'max_tokens': cfg['max_tokens'],
             'output_token_limit_mode': limit_mode(cfg['max_tokens']),
             'budget': cfg['budget'], 'alpha': cfg['alpha'],

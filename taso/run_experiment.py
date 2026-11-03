@@ -190,6 +190,12 @@ def experiment_command(root, args, python, results):
     if args.strategy_file:
         command.extend(['--strategy-file', args.strategy_file.resolve()])
     if args.experiment == 'suite':
+        if args.gpu_feedback is not None:
+            command.extend(['--gpu-feedback', args.gpu_feedback])
+        if args.reuse_checkpoint_batch is not None:
+            command.extend(['--reuse-checkpoint-batch', args.reuse_checkpoint_batch.resolve()])
+        if args.min_successful_trials is not None:
+            command.extend(['--min-successful-trials', str(args.min_successful_trials)])
         if args.max_retries is not None:
             command.extend(['--max-retries', str(args.max_retries)])
         if args.checkpoint_interval is not None:
@@ -217,6 +223,9 @@ def parse_args(argv=None):
     parser.add_argument('--jobs', default='2', choices=['1', '2', '4'], help='Parallel compilation jobs')
     parser.add_argument('--checkpoint-interval', type=int, nargs='?', const=25,
                         help='Suite: enable online feedback every N expansions, e.g. 25, 10 or 5')
+    parser.add_argument('--gpu-feedback', choices=['off', 'on', 'both'], help='Suite: GPU feedback condition(s)')
+    parser.add_argument('--reuse-checkpoint-batch', type=Path, help='Suite: reuse historical plain-checkpoint results without new calls')
+    parser.add_argument('--min-successful-trials', type=int, help='Suite comparison: required successful trials per group (default 3)')
     parser.add_argument('--suite-config', type=Path, help='Suite experiment configuration JSON')
     parser.add_argument('--batch-dir', type=Path, help='Suite results folder; reuse to resume the same batch')
     parser.add_argument('--retry-evaluation', action='store_true', help='Suite: retry GPU evaluation using saved strategies')
@@ -231,6 +240,9 @@ def parse_args(argv=None):
         parser.error('--checkpoint-interval must be positive')
     if args.max_retries is not None and (args.experiment != 'suite' or not 0 <= args.max_retries <= 3):
         parser.error('--max-retries requires suite and a value from 0 to 3')
+    if args.experiment != 'suite' and any(v is not None for v in (
+            args.gpu_feedback, args.reuse_checkpoint_batch, args.min_successful_trials)):
+        parser.error('GPU feedback/comparison options require --experiment suite')
     return args
 
 

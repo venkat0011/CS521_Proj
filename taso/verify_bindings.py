@@ -49,6 +49,7 @@ def inspect_binding(repo, expected_prefix=None):
                       installed_mapping_count=len(table), type_19=table.get(19), type_20=table.get(20),
                       type_21=table.get(21), mismatches=mismatches,
                       checkpoint_api=callable(getattr(taso, 'optimize_with_checkpoints', None)))
+        report['gpu_feedback_api'] = callable(getattr(getattr(core, 'PyGraph', None), 'run_time_for_feedback', None))
         if mismatches:
             errors.append('Installed binding differs from checkout source: force-regenerate, rebuild and reinstall TASO.')
         if not path.is_relative_to(prefix):

@@ -1309,10 +1309,40 @@ bool Graph::has_loop(void)
 
 float Graph::run(void)
 {
+  return run_runtime(false);
+}
+
+float Graph::run_time_for_feedback(void)
+{
+  // Copy topology only: run_runtime creates fresh execution operators. Do not
+  // preprocess/rewrite the borrowed search graph or allocate cached weights.
+  Graph snapshot(*this);
+  return snapshot.run_runtime(true);
+}
+
+float Graph::run_runtime(bool for_feedback)
+{
   std::map<Op, int, OpCompare> todos;
   std::map<Op, std::set<Edge, EdgeCompare>, OpCompare>::const_iterator it;
   std::vector<Op> opList;
   std::vector<OpBase*> opBaseList;
+  std::vector<OpBase*> timedOps;
+  std::vector<void*> inputAllocations;
+  std::map<Op, bool, OpCompare> constantOnly;
+  struct RuntimeOwner {
+    bool active;
+    Model* model;
+    std::vector<OpBase*>& ops;
+    std::vector<void*>& inputs;
+    ~RuntimeOwner() {
+      if (!active) return;
+      for (auto it = ops.rbegin(); it != ops.rend(); ++it) {
+        (*it)->unmap();
+        delete *it;
+      }
+      for (void* ptr : inputs) model->release_memory(ptr);
+    }
+  } runtime_owner{for_feedback, model, opBaseList, inputAllocations};
   for (it = inEdges.begin(); it != inEdges.end(); it++) {
     int cnt = 0;
     std::set<Edge, EdgeCompare> inList = it->second;
@@ -1330,7 +1360,9 @@ float Graph::run(void)
     std::set<Edge, EdgeCompare> outList = outEdges[op];
     std::set<Edge, EdgeCompare> inList = inEdges[op];
     std::set<Edge, EdgeCompare>::const_iterator it2;
-    assert(inList.size() > 0);
+    const bool constantLeaf = op.ptr->type == OP_CONSTANT_IMM || op.ptr->type == OP_CONSTANT_ICONV ||
+                              op.ptr->type == OP_CONSTANT_ONE || op.ptr->type == OP_CONSTANT_POOL;
+    assert(inList.size() > 0 || (for_feedback && constantLeaf));
     OpBase* opPtr = NULL;
     // Step 1: prepare inputs
     Tensor inputs[MAX_NUM_INPUTS];
@@ -1345,6 +1377,7 @@ float Graph::run(void)
       if (op.ptr->type == OP_INPUT) {
         assert(t.data_ptr == NULL);
         t.data_ptr = (DATATYPE*) model->allocate_memory(size);
+        if (for_feedback) inputAllocations.push_back(t.data_ptr);
       } else {
         assert(t.data_ptr != NULL);
       }
@@ -1387,6 +1420,40 @@ float Graph::run(void)
 #endif
     // Step 2: create Ops
     switch (op.ptr->type) {
+      case OP_CONSTANT_IMM:
+      case OP_CONSTANT_ICONV:
+      case OP_CONSTANT_ONE:
+      case OP_CONSTANT_POOL:
+      {
+        if (!for_feedback) throw std::runtime_error("Fold constants before ordinary run_time");
+        opPtr = new Constant(model, op.ptr->outputs[0].numDim, op.ptr->outputs[0].dim, op.ptr->type);
+        break;
+      }
+      case OP_MUL:
+      {
+        opPtr = new Mul(model, inputs[0], inputs[1]);
+        break;
+      }
+      case OP_FUSE_CONV_BATCHNORM:
+      {
+        opPtr = new FuseConvBatchNorm(model, inputs[0], inputs[1], inputs[2], inputs[3], inputs[4]);
+        break;
+      }
+      case OP_FUSE_CONV_BATCHNORM_ALPHA_VAR:
+      {
+        opPtr = new FuseConvBatchNormAlphaVar(model, inputs[0], inputs[1], inputs[2]);
+        break;
+      }
+      case OP_FUSE_CONV_BATCHNORM_BIAS:
+      {
+        opPtr = new FuseConvBatchNormBias(model, inputs[0], inputs[1], inputs[2], inputs[3]);
+        break;
+      }
+      case OP_BROADCAST_ADD:
+      {
+        opPtr = new BroadcastAdd(model, inputs[0], inputs[1]);
+        break;
+      }
       case OP_CONV2D:
       {
         Conv2D* conv = (Conv2D*) op.ptr;
@@ -1507,12 +1574,32 @@ float Graph::run(void)
         break;
       }
       default:
+        if (for_feedback) throw std::runtime_error("Unsupported snapshot GPU operator: " + std::to_string(op.ptr->type));
         printf("op.type = %d\n", op.ptr->type);
         assert(false);
     }
     // Step 3: map new Op
+    std::unique_ptr<OpBase> mapping_owner(opPtr);
     opPtr->map();
     opBaseList.push_back(opPtr);
+    mapping_owner.release();
+    if (for_feedback) {
+      bool constant = op.ptr->type == OP_WEIGHT;
+      if (op.ptr->type != OP_INPUT && op.ptr->type != OP_WEIGHT) {
+        constant = true;
+        for (it2 = inList.begin(); it2 != inList.end(); ++it2)
+          constant = constant && constantOnly.at(it2->srcOp);
+      }
+      constantOnly[op] = constant;
+      if (constant) {
+        // Fold constant-only computation once outside the inference timer.
+        // Its fresh output buffers feed later runtime operators; no cached
+        // search operator, edge, GUID or operator-cost entry is mutated.
+        opPtr->forward(true);
+      } else {
+        timedOps.push_back(opPtr);
+      }
+    }
     for (it2 = outList.begin(); it2 != outList.end(); it2++) {
       todos[it2->dstOp] --;
       //printf("myOp(%zu) dstOp(%zu) dstType(%d) dstTodos(%d)\n",
@@ -1542,7 +1629,7 @@ float Graph::run(void)
   assert(opList.size() == inEdges.size());
   assert(opList.size() == opBaseList.size());
 
-  return model->measure_oplist_runtime(opBaseList);
+  return model->measure_oplist_runtime(for_feedback ? timedOps : opBaseList);
 }
 
 void Graph::print_costs(void)

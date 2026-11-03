@@ -26,7 +26,7 @@ CONTRACT_HASHES = {
     'void GraphXfer::run(': '172b9be4121ed1249d223c512b90102e8feb051804a32cc6e1a161155a65de9f',
     'bool GraphXfer::can_match(': '26ec7351fa841160b3dbcf67f6a579e23afa4dc5e8deb5f313abbf3dd52e2322',
 }
-HEADER_HASH = '72ffea67e32c9e0b8f0f8bf16033ac0802da25bed0d36d73ecd44c8e14e359da'
+HEADER_HASH = '155b88b2631fd189a9f83c64f8364ef44cd455dd6d97f493b49129775cb2f3e7'
 SEARCH_CONTRACT = (
     'TASO orders a persistent priority queue of whole graphs by estimated cost. '
     'One expansion pops one graph and tries every enabled rule at every valid match. '
@@ -241,9 +241,21 @@ def build_checkpoint_messages(static, compact, observation, feedback, next_budge
     objective = {'next_expansion_budget': next_budget, 'total_search_budget': feedback['total_budget'],
                  'expansions_consumed': feedback['expansions'], 'budget_remaining': feedback['budget_remaining'],
                  'alpha': alpha, 'quality_target': 'Minimize estimated graph cost; final GPU latency is evaluation only.'}
+    use_gpu = 'gpu_feedback' in feedback
+    contract = SEARCH_CONTRACT
+    template = 'checkpoint_compact_prompt_template.txt'
+    if use_gpu:
+        template = 'checkpoint_gpu_prompt_template.txt'
+        contract = SEARCH_CONTRACT.replace(
+            'All cost feedback is estimated; final GPU latency is measured separately and is not supplied here.',
+            'GPU feedback supplies measured snapshot-inference latency of the estimated-best graph at reached checkpoints. '
+            'The queue, admission threshold and returned-graph selection still use estimated cost.')
+        objective['quality_target'] = ('Seek low final measured GPU latency by selecting promising rules. '
+            'Use both measured feedback and estimated costs; measurements cover only observed best graphs, '
+            'and queue ranking still uses estimated costs.')
     model_source = model_source or 'Not supplied; use the actual live TASO graph.'
-    content = Template((HERE / 'checkpoint_compact_prompt_template.txt').read_text()).substitute(
-        contract=SEARCH_CONTRACT, catalog_legend=CATALOG_LEGEND, graph_legend=GRAPH_LEGEND,
+    content = Template((HERE / template).read_text()).substitute(
+        contract=contract, catalog_legend=CATALOG_LEGEND, graph_legend=GRAPH_LEGEND,
         catalog=encoded(compact['catalog']), graph=encoded(graph), feedback=encoded(compact_observation),
         objective=encoded(objective), model_source=model_source)
     messages = [{'role': 'system', 'content': 'You select TASO rewrites for the NEXT checkpoint interval only. Return exact strategy JSON.'},
@@ -256,7 +268,7 @@ def build_checkpoint_messages(static, compact, observation, feedback, next_budge
                      'graph': byte_size(graph), 'feedback': byte_size(compact_observation),
                      'model_source': len(model_source.encode())}
     full_size, compact_size = sum(full_parts.values()), sum(compact_parts.values())
-    metrics = {'prompt_version': PROMPT_VERSION, 'rule_count': compact['rule_count'],
+    metrics = {'prompt_version': 'checkpoint_compact_gpu_v1' if use_gpu else PROMPT_VERSION, 'rule_count': compact['rule_count'],
         'rule_ids_sha256': compact['rule_ids_sha256'], 'messages_sha256': digest(messages),
         'messages_utf8_bytes': byte_size(messages), 'full_components_bytes': full_parts,
         'compact_components_bytes': compact_parts,

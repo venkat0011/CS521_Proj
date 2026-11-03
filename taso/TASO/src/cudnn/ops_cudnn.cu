@@ -90,6 +90,11 @@ void* Model::allocate_memory(size_t size, const DATATYPE* data_initial)
   return ptr;
 }
 
+void Model::release_memory(void* ptr)
+{
+  if (ptr != NULL && ptr != (void*)0x1) checkCUDA(cudaFree(ptr));
+}
+
 bool Model::copy_memory(DATATYPE* dst, const DATATYPE* src, size_t size)
 {
   checkCUDA(cudaMemcpy(dst, src, size, cudaMemcpyDefault));

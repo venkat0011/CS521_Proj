@@ -13,6 +13,7 @@ from model_settings import resolve_settings
 from openrouter_client import OpenRouterClient
 from token_limits import limit_mode
 from checkpoint_completion import CheckpointCompletion, aggregate_attempts
+from gpu_feedback import measure_best_graph
 
 
 def save(path, value):
@@ -28,6 +29,7 @@ class CheckpointStrategist:
         self.context_path, self.source, self.out = Path(context_path), source, Path(out)
         self.client_factory, self.dry_run = client_factory, dry_run
         self.records = []
+        self.gpu_history = []
         self.out.mkdir(parents=True, exist_ok=True)
         self.static = json.loads(self.context_path.read_text())
         self.compact_static = compact_static_context(self.static)
@@ -41,6 +43,8 @@ class CheckpointStrategist:
             metadata = aggregate_attempts(attempts, self.model, self.cfg['max_tokens'], self.settings)
             metadata.update(prompt_version=PROMPT_VERSION,
                             checkpoints_reached=len(self.records), max_retries=self.cfg.get('max_retries', 3))
+            if self.cfg.get('gpu_feedback', False):
+                metadata.update(prompt_version='checkpoint_compact_gpu_v1', gpu_feedback=True)
             return metadata
         metadata = [record.get('inference') or {} for record in self.records]
         usage, reasoning = Counter(), 0
@@ -108,6 +112,14 @@ class CheckpointStrategist:
                                  'strategy': r['strategy']}
                                 for r in self.records if 'strategy' in r],
             feedback_type='estimated_cost_only; no GPU runtime observations')
+        if self.cfg.get('gpu_feedback', False):
+            measurement = measure_best_graph(graph, consumed, self.gpu_history,
+                                             self.cfg.get('gpu_feedback_repeats', 3))
+            self.gpu_history.append(measurement)
+            feedback.update(gpu_feedback=measurement,
+                            feedback_type='estimated_cost_and_measured_best_graph_gpu_latency')
+            save(directory / 'gpu_feedback.json', measurement)
+            save(self.out / 'gpu_feedback.json', self.gpu_history)
         messages, compact_inputs, metrics = build_checkpoint_messages(
             self.static, self.compact_static, observation, feedback, chunk, self.cfg['alpha'], self.source)
         catalog = self.static['catalog']
@@ -129,6 +141,8 @@ class CheckpointStrategist:
                 'best_search_cost_ms': progress['best_search_cost_ms'],
                 'queue_remaining': progress['queue_remaining'], 'status': 'dry_run',
                 'strategy': strategy, 'model_calls': 0, 'prompt_compaction': metrics})
+            if self.gpu_history:
+                self.records[-1]['gpu_feedback'] = self.gpu_history[-1]
             save(self.out / 'checkpoints.json', self.records)
             return strategy
         print(f'[checkpoint {consumed}/{budget}] {PROMPT_VERSION}: {metrics["messages_utf8_bytes"]} bytes; '
@@ -137,6 +151,8 @@ class CheckpointStrategist:
                   'best_search_cost_ms': progress['best_search_cost_ms'],
                   'queue_remaining': progress['queue_remaining'], 'status': 'started', 'model_calls': 1,
                   'prompt_compaction': metrics}
+        if self.gpu_history:
+            record['gpu_feedback'] = self.gpu_history[-1]
         self.records.append(record)
         # Persist intent BEFORE contacting the provider, including for interrupted requests.
         save(marker, record)

@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "networks": [
+    "squeezenet"
+  ],
+  "models": [
+    "google/gemini-3.8-flash"
+  ],
+  "trials": 1,
+  "budget": 20,
+  "alpha": 1.05,
+  "weight_seed": 521,
+  "max_phases": 4,
+  "max_tokens": "max",
+  "temperature": 0.2,
+  "worker_timeout_seconds": 30000,
+  "budget_provenance": "Project choice: 100 exact graph expansions for every network and both policies. The TASO paper does not give per-network expansion budgets. Its alpha=1.05 is used here.",
+  "reasoning_effort": "medium",
+  "reasoning_effort_overrides": {
+    "deepseek/deepseek-v4-pro": "high",
+    "moonshotai/kimi-k3.1-pro": "high"
+  },
+  "search_mode": "checkpoint",
+  "checkpoint_interval": 10,
+  "completion_policy": "continue_on_length",
+  "max_retries": 3,
+  "request_timeout_seconds": 1800,
+  "gpu_feedback_repeats": 3
+}

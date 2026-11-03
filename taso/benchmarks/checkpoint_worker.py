@@ -19,6 +19,8 @@ def evaluate_checkpoint_trial(ts, build, cfg, args, report):
         args.prepared / 'static_context.json',
         (args.prepared / 'model_source.py').read_text(), args.out)
     report.update(search_mode='checkpoint', checkpoint_interval=interval, prompt_version=PROMPT_VERSION,
+        feedback_mode='checkpoint_gpu' if cfg.get('gpu_feedback', False) else 'checkpoint',
+        gpu_feedback=cfg.get('gpu_feedback', False),
         max_checkpoint_decisions=(budget - 1) // interval + 1,
         max_model_calls=((budget - 1) // interval + 1) * (
             cfg.get('max_retries', 3) + 1 if cfg.get('completion_policy') else 1),
@@ -36,6 +38,10 @@ def evaluate_checkpoint_trial(ts, build, cfg, args, report):
         ])
     if cfg.get('completion_policy'):
         report['notes'].append('Length continuations, missing/invalid strategy retries and transient-provider retries share the configured follow-up limit per checkpoint; OpenRouter selects providers and all returned usage is included.')
+    if cfg.get('gpu_feedback', False):
+        report['prompt_version'] = 'checkpoint_compact_gpu_v1'
+        report['notes'] = [n for n in report['notes'] if not n.startswith('Feedback contains estimated costs')]
+        report['notes'].append('LLM feedback includes snapshot GPU latency of the estimated-best graph; queue ranking/selection remain estimated-cost based.')
     try:
         started = time.perf_counter()
         for name in order:
@@ -72,4 +78,7 @@ def evaluate_checkpoint_trial(ts, build, cfg, args, report):
             save(args.out / 'worker_result.json', report)
     finally:
         report.update(model_calls=controller.model_calls, inference=controller.aggregate(),
-                      checkpoint_decisions=controller.records)
+                      checkpoint_decisions=controller.records,
+                      gpu_feedback_observations=controller.gpu_history,
+                      gpu_feedback_seconds=sum(m['measurement_wall_seconds'] for m in controller.gpu_history),
+                      gpu_feedback_samples=sum(len(m['samples_ms']) for m in controller.gpu_history))

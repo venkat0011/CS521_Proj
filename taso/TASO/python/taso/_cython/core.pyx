@@ -195,6 +195,12 @@ cdef class PyGraph:
     def run_time(self):
         return self.p_graph.run()
 
+    def run_time_for_feedback(self):
+        """Time a borrowed graph snapshot; prepare constants once and release buffers."""
+        if self.p_graph == NULL:
+            raise RuntimeError('Search graph is no longer live')
+        return self.p_graph.run_time_for_feedback()
+
     def cost(self):
         return self.p_graph.total_cost()
 

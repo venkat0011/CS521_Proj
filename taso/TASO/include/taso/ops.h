@@ -456,6 +456,7 @@ enum PaddingMode {
 
 class OpBase {
 public:
+  virtual ~OpBase() {}
   OpBase(Model* _model, OpType _type); // No inputs
   OpBase(const Tensor& input, Model* _model, OpType _type);
   OpBase(const Tensor& input0, const Tensor& input1,
@@ -675,6 +676,8 @@ public:
   bool has_loop(void);
   float total_cost(void);
   float run();
+  float run_time_for_feedback();
+  float run_runtime(bool for_feedback);
   void print_costs(void);
   void print_measurements(void);
 #ifdef TRT
@@ -1461,6 +1464,7 @@ public:
   void measure_unsqueeze_cost(Unsqueeze*);
   void measure_where_cost(Where*);
   void* allocate_memory(size_t size, const DATATYPE* initial_data= NULL);
+  void release_memory(void* ptr);
   bool copy_memory(DATATYPE* dst, const DATATYPE* src, size_t size);
   float measure_oplist_runtime(const std::vector<OpBase*>& list);
   bool broadcastable(const Tensor& t1, const Tensor& t2);
