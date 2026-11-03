@@ -86,8 +86,9 @@ Feedback includes the current best found graph, remaining budget, queue size,
 estimated improvement, cumulative rewrite counters, active-rule statistics for
 the last interval and previous policy decisions. The best found graph can be an
 unexpanded queue candidate, so it need not be the next graph TASO pops. It is not
-a complete view of the frontier. The rule catalog, model construction source
-and selected search source remain in the prompt. No GPU runtime measurements are
+a complete view of the frontier. The full rule catalog is compacted deterministically, the model-construction
+source is retained, and a source-checked contract replaces the full search-code
+dump. See [prompt compaction](../llm_context/COMPACTION.md). No GPU runtime measurements are
 provided to the LLM in this version.
 
 A skipped rule is not replayed on an already expanded graph. If the queue empties,
@@ -172,3 +173,6 @@ If the check fails, inspect `taso/results/bindings_check.json` (setup) or
 `<batch>/prepared/<network>/bindings_check.json` (worker) before running trials.
 The dry run makes no model requests. After it succeeds, remove `--dry-run` and
 reuse the same new batch directory. Existing experiment results stay in place.
+
+Checkpoint prompts now use `checkpoint_compact_v1` automatically. See
+[compaction details and offline inspection](../llm_context/COMPACTION.md).

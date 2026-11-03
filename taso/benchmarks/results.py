@@ -34,6 +34,8 @@ def flatten(report):
     row = {k: report.get(k) for k in ('network', 'model', 'trial', 'status', 'error', 'budget', 'alpha', 'model_calls', 'search_mode', 'checkpoint_interval')}
     inference = report.get('inference') or {}
     row['inference_seconds'] = inference.get('inference_seconds')
+    row['prompt_version'] = inference.get('prompt_version')
+    row['prompt_bytes_total'] = inference.get('prompt_bytes_total')
     for key in ('requested_temperature', 'temperature', 'requested_reasoning_effort',
                 'reasoning_effort', 'reasoning_effort_override_applied', 'capabilities_checked_on'):
         row[key] = inference.get(key)

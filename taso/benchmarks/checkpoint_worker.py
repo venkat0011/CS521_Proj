@@ -3,6 +3,7 @@ import json
 import time
 
 from checkpoint_strategy import CheckpointStrategist
+from compact_checkpoint_prompt import PROMPT_VERSION
 from worker import all_rules, observe, optimize, save, search_observation
 
 
@@ -17,7 +18,7 @@ def evaluate_checkpoint_trial(ts, build, cfg, args, report):
     controller = CheckpointStrategist(args.model, cfg,
         args.prepared / 'static_context.json',
         (args.prepared / 'model_source.py').read_text(), args.out)
-    report.update(search_mode='checkpoint', checkpoint_interval=interval,
+    report.update(search_mode='checkpoint', checkpoint_interval=interval, prompt_version=PROMPT_VERSION,
         max_model_calls=(budget - 1) // interval + 1,
         evaluation_order=order, warmup_searches_per_policy=1,
         notes=[

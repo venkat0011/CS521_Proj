@@ -84,8 +84,8 @@ class CheckpointTests(unittest.TestCase):
         self.addCleanup(self.modules.stop)
 
     def context(self, directory):
-        worker.save(directory / 'static_context.json', {'catalog': {
-            'rules': [{'rule_id': 'builtin:000'}]}, 'source_context': []})
+        from prepare_context import prepare_context
+        prepare_context(ROOT / 'TASO', directory)
         (directory / 'model_source.py').write_text('Actual graph construction source')
         return directory / 'static_context.json'
 
@@ -150,6 +150,8 @@ class CheckpointTests(unittest.TestCase):
             self.assertEqual(len(feedback['previous_decisions']), 1)
             self.assertEqual(len({json.dumps(b['messages']) for b in bodies}), 3)
             self.assertIn('NEXT checkpoint interval only', bodies[0]['messages'][1]['content'])
+            self.assertNotIn('Full rule factory, constructor and matching semantics', bodies[0]['messages'][1]['content'])
+            self.assertTrue((directory / 'checkpoints/expansion_0025/prompt_compaction.json').exists())
             self.assertNotIn('There are no LLM calls', bodies[0]['messages'][1]['content'])
             metadata = controller.aggregate()
             self.assertEqual(metadata['usage']['total_tokens'], 360)

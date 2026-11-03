@@ -111,3 +111,6 @@ The input is sent on each stateless request; provider caching is not assumed.
 No live paid API request has been made by the coding agent. The provider
 adapter and validation have local fixture tests; real model behavior requires
 your first Colab request.
+
+Checkpoint mode uses the separate deterministic [compact prompt representation](COMPACTION.md).
+The one-shot builder and prompt template remain unchanged.

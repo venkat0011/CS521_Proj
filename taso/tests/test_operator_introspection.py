@@ -110,7 +110,9 @@ class OperatorIntrospectionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(sys.modules, {'taso.strategy': compiler}):
             directory = Path(tmp)
             context = directory / 'context.json'
-            context.write_text(json.dumps({'catalog': {'rules': [{'rule_id': 'builtin:000'}]}, 'source_context': []}))
+            from prepare_context import prepare_context
+            prepare_context(ROOT / 'TASO', directory)
+            context = directory / 'static_context.json'
             controller = checkpoint_strategy.CheckpointStrategist('google/gemini-3.8-flash', cfg,
                 context, 'Actual model source', directory,
                 client_factory=lambda *a, **kw: self.fail('Preflight made an API client'), dry_run=True)

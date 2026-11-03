@@ -6,7 +6,9 @@ from pathlib import Path
 import time
 
 from graph_context import graph_context
-from llm_strategy import build_messages, validate_strategy
+from llm_strategy import validate_strategy
+from compact_checkpoint_prompt import (PROMPT_VERSION, compact_static_context,
+                                       build_checkpoint_messages)
 from model_settings import resolve_settings
 from openrouter_client import OpenRouterClient
 
@@ -25,6 +27,9 @@ class CheckpointStrategist:
         self.client_factory, self.dry_run = client_factory, dry_run
         self.records = []
         self.out.mkdir(parents=True, exist_ok=True)
+        self.static = json.loads(self.context_path.read_text())
+        self.compact_static = compact_static_context(self.static)
+        save(self.out / 'compact_static_context.json', self.compact_static)
         self.settings = resolve_settings(model, cfg['temperature'], cfg.get('reasoning_effort'),
                                          cfg.get('reasoning_effort_overrides'))
 
@@ -48,6 +53,9 @@ class CheckpointStrategist:
                 'request_ids': [item['request_id'] for item in metadata if item.get('request_id')],
                 'inference_seconds': sum(item.get('inference_seconds', 0) or 0 for item in metadata),
                 'max_tokens': self.cfg['max_tokens'],
+                'prompt_version': PROMPT_VERSION,
+                'prompt_bytes_total': sum(r.get('prompt_compaction', {}).get('messages_utf8_bytes', 0)
+                                          for r in self.records if r.get('model_calls', 0) > 0),
                 **{k: v for k, v in self.settings.items() if k != 'parameters'}}
 
     @property
@@ -67,7 +75,8 @@ class CheckpointStrategist:
             raise RuntimeError('Checkpoint already attempted; no automatic replacement API call. '
                                'Search state is in memory only. Use a new trial/batch after interruption.')
         save(directory / 'progress.json', progress)
-        save(directory / 'graph.json', graph_context(graph))
+        observation = graph_context(graph)
+        save(directory / 'graph.json', observation)
         completed = [p for p in progress['phases'] if p['expansions']]
         counters = Counter()
         for phase in completed:
@@ -80,16 +89,21 @@ class CheckpointStrategist:
             improvement_since_previous_checkpoint_ms=previous_cost - progress['best_search_cost_ms'],
             cumulative_counters=dict(counters),
             last_interval_rules=[r for r in completed[-1]['rules'] if r['attempts']] if completed else [],
-            previous_decisions=[{'at_expansion': r['expansions'], 'strategy': r['strategy']}
+            previous_decisions=[{'at_expansion': r['expansions'], 'best_search_cost_ms': r['best_search_cost_ms'],
+                                 'strategy': r['strategy']}
                                 for r in self.records if 'strategy' in r],
             feedback_type='estimated_cost_only; no GPU runtime observations')
-        messages, catalog = build_messages(graph, self.context_path, chunk, self.cfg['alpha'],
-                                           1, self.source, checkpoint_feedback=feedback)
+        messages, compact_inputs, metrics = build_checkpoint_messages(
+            self.static, self.compact_static, observation, feedback, chunk, self.cfg['alpha'], self.source)
+        catalog = self.static['catalog']
+        save(directory / 'graph_compact.json', compact_inputs['graph'])
+        save(directory / 'feedback_compact.json', compact_inputs['feedback'])
+        save(directory / 'prompt_compaction.json', metrics)
         save(directory / 'feedback.json', feedback)
         save(directory / 'request.json', messages)
         save(directory / 'request_metadata.json', {
             'request_sha256': hashlib.sha256(json.dumps(messages, ensure_ascii=False).encode()).hexdigest(),
-            'expansions': consumed, 'next_expansion_budget': chunk})
+            'expansions': consumed, 'next_expansion_budget': chunk, **metrics})
         if self.dry_run:
             # Exercise every reached boundary using a deterministic all-rule policy.
             # These are preflight observations, not predictions of later LLM feedback.
@@ -99,17 +113,19 @@ class CheckpointStrategist:
             self.records.append({'expansions': consumed, 'next_expansion_budget': chunk,
                 'best_search_cost_ms': progress['best_search_cost_ms'],
                 'queue_remaining': progress['queue_remaining'], 'status': 'dry_run',
-                'strategy': strategy, 'model_calls': 0})
+                'strategy': strategy, 'model_calls': 0, 'prompt_compaction': metrics})
             save(self.out / 'checkpoints.json', self.records)
             return strategy
-        print(f'[checkpoint {consumed}/{budget}] requesting policy for next {chunk} expansions', flush=True)
+        print(f'[checkpoint {consumed}/{budget}] {PROMPT_VERSION}: {metrics["messages_utf8_bytes"]} bytes; '
+              f'requesting policy for next {chunk} expansions', flush=True)
         client = self.client_factory(self.model, save_to=directory,
             max_tokens=self.cfg['max_tokens'], temperature=self.cfg['temperature'],
             reasoning_effort=self.cfg.get('reasoning_effort'),
             reasoning_effort_overrides=self.cfg.get('reasoning_effort_overrides'))
         record = {'expansions': consumed, 'next_expansion_budget': chunk,
                   'best_search_cost_ms': progress['best_search_cost_ms'],
-                  'queue_remaining': progress['queue_remaining'], 'status': 'started', 'model_calls': 1}
+                  'queue_remaining': progress['queue_remaining'], 'status': 'started', 'model_calls': 1,
+                  'prompt_compaction': metrics}
         self.records.append(record)
         # Persist intent BEFORE contacting the provider, including for interrupted requests.
         save(marker, record)
