@@ -13,7 +13,7 @@ SYSTEM_PROMPT = ('You generate TASO phase schedules using only supplied rewrite 
 
 
 def build_messages(graph, context_path=DEFAULT_CONTEXT, total_budget=24, alpha=1.5,
-                   max_phases=4, model_source=None):
+                   max_phases=4, model_source=None, checkpoint_feedback=None):
     from taso.strategy import compile_strategy
     if type(total_budget) is not int or not 1 <= total_budget <= 2**31 - 1:
         raise ValueError('total_budget must be a positive integer <= INT_MAX')
@@ -30,7 +30,18 @@ def build_messages(graph, context_path=DEFAULT_CONTEXT, total_budget=24, alpha=1
         'quality_target': 'Minimize the final graph estimated cost; final GPU measurements are evaluation only.',
         'candidate_ordering': 'Existing TASO estimated-cost ordering',
     }
-    content = Template((HERE / 'prompt_template.txt').read_text()).substitute(
+    template = 'prompt_template.txt'
+    feedback_text = ''
+    if checkpoint_feedback is not None:
+        template = 'checkpoint_prompt_template.txt'
+        objective.update(feedback_during_search='estimated-cost search statistics',
+                         strategy_scope='Next checkpoint interval only; exactly one phase',
+                         total_search_budget=checkpoint_feedback['total_budget'],
+                         expansions_consumed=checkpoint_feedback['expansions'],
+                         budget_remaining=checkpoint_feedback['budget_remaining'])
+        feedback_text = json.dumps(checkpoint_feedback, separators=(',', ':'))
+    content = Template((HERE / template).read_text()).substitute(
+        feedback=feedback_text,
         model_source=model_source or 'Not supplied. Use the extracted TASO graph; do not invent PyTorch source.',
         graph=json.dumps(observation, separators=(',', ':')),
         catalog=json.dumps(static['catalog'], separators=(',', ':')),

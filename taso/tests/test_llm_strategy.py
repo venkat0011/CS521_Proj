@@ -16,6 +16,7 @@ CONTEXT = ROOT / 'llm_context'
 sys.path.insert(0, str(CONTEXT))
 import llm_strategy
 import openrouter_client
+from model_settings import resolve_settings
 spec = importlib.util.spec_from_file_location('taso.strategy', ROOT / 'TASO/python/taso/strategy.py')
 strategy_module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(strategy_module)
@@ -99,6 +100,57 @@ class LlmTests(unittest.TestCase):
             self.assertIn('deepseek-v4-pro', json.loads(http.call_args.args[0].data)['model'])
             for path in Path(temp).iterdir():
                 self.assertNotIn('test-key-never-save', path.read_text())
+
+    def test_per_model_request_parameters_and_saved_metadata(self):
+        cases = [
+            ('google/gemini-3.8-flash', .2, 'medium'),
+            ('deepseek/deepseek-v4-pro', .2, 'high'),
+            ('google/gemini-4-argon', .2, 'medium'),
+            ('anthropic/claude-opus-5.5', None, 'medium'),
+            ('openai/gpt-5.3-codex', None, 'medium'),
+            ('moonshotai/kimi-k3.1-pro', None, 'high'),
+        ]
+        response = {'choices': [{'finish_reason': 'stop', 'message': {'content': '{}'}}]}
+        for model, temperature, effort in cases:
+            with self.subTest(model=model), tempfile.TemporaryDirectory() as temp, patch.dict(
+                    os.environ, {'OPENROUTER_API_KEY': 'test-key-never-save'}):
+                client = openrouter_client.OpenRouterClient(
+                    model, save_to=temp, max_tokens=32768, temperature=.2,
+                    reasoning_effort='medium',
+                    reasoning_effort_overrides={'moonshotai/kimi-k3.1-pro': 'high',
+                                                'deepseek/deepseek-v4-pro': 'high'})
+                with patch.object(openrouter_client.urllib.request, 'urlopen',
+                                  return_value=io.StringIO(json.dumps(response))) as http:
+                    client([{'role': 'user', 'content': 'fixture'}])
+                body = json.loads(http.call_args.args[0].data)
+                self.assertEqual(body['reasoning'], {'effort': effort})
+                self.assertEqual(body.get('temperature'), temperature)
+                self.assertEqual('temperature' in body, temperature is not None)
+                self.assertEqual(body['provider'], {'require_parameters': True})
+                self.assertEqual(body['max_tokens'], 32768)
+                self.assertEqual(json.loads((Path(temp) / 'api_request.json').read_text()), body)
+                metadata = json.loads((Path(temp) / 'inference_metadata.json').read_text())
+                self.assertEqual(metadata['requested_temperature'], .2)
+                self.assertEqual(metadata['temperature'], temperature)
+                self.assertEqual(metadata['requested_reasoning_effort'], 'medium')
+                self.assertEqual(metadata['reasoning_effort'], effort)
+                self.assertEqual('temperature' in metadata['omitted_parameters'], temperature is None)
+                self.assertEqual(metadata['reasoning_effort_override_applied'], effort == 'high')
+                for path in Path(temp).iterdir():
+                    self.assertNotIn('test-key-never-save', path.read_text())
+
+    def test_unsupported_effort_and_unknown_model_fail_before_api_call(self):
+        with patch.object(openrouter_client.urllib.request, 'urlopen') as http:
+            with self.assertRaisesRegex(ValueError, 'does not support'):
+                openrouter_client.OpenRouterClient('moonshotai/kimi-k3.1-pro', reasoning_effort='medium')
+            with self.assertRaisesRegex(ValueError, 'No verified parameter profile'):
+                openrouter_client.OpenRouterClient('unverified/model')
+            http.assert_not_called()
+        # Existing standalone DeepSeek calls retain provider-default reasoning.
+        settings = resolve_settings('deepseek/deepseek-v4-pro')
+        self.assertEqual(settings['parameters'], {'temperature': .2})
+        with self.assertRaisesRegex(ValueError, 'does not support'):
+            resolve_settings('deepseek/deepseek-v4-pro', reasoning_effort='medium')
 
     def test_incomplete_response_stops_without_retry(self):
         response = {'choices': [{'finish_reason': 'length', 'message': {'content': '{'}}]}

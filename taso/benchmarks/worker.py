@@ -12,7 +12,7 @@ import traceback
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / 'llm_context'))
-sys.path.insert(0, str(HERE.parent / 'baseline'))
+sys.path.insert(0, str(HERE.parent))
 from networks import build_network
 
 
@@ -48,6 +48,10 @@ def optimize(ts, graph, strategy, alpha, trace_path, budget):
     result = ts.optimize_with_strategy(graph, strategy, alpha=alpha,
                                       trace_file=str(trace_path), print_subst=False)
     elapsed = time.perf_counter() - started
+    return result, search_observation(result, trace_path, budget, elapsed)
+
+
+def search_observation(result, trace_path, budget, elapsed):
     trace = json.loads(trace_path.read_text())
     if not 0 < trace['expansions'] <= budget:
         raise RuntimeError('Native executor violated expansion budget')
@@ -61,18 +65,19 @@ def optimize(ts, graph, strategy, alpha, trace_path, budget):
     observation.update(search_seconds=elapsed, expansions=trace['expansions'],
                        stop_reason=trace['stop_reason'], queue_remaining=trace['queue_remaining'],
                        counters=dict(counters), trace_file=trace_path.name)
-    return result, observation
+    return observation
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--stage', choices=['prepare', 'evaluate'], required=True)
+    parser.add_argument('--stage', choices=['prepare', 'evaluate', 'checkpoint'], required=True)
     parser.add_argument('--network', required=True)
     parser.add_argument('--repo', type=Path, required=True)
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--config', type=Path, required=True)
     parser.add_argument('--prepared', type=Path, help='Frozen network preparation directory (evaluate only)')
     parser.add_argument('--trial', type=int, default=1)
+    parser.add_argument('--model', help='Checkpoint worker: OpenRouter model ID')
     args = parser.parse_args(argv)
     args.out.mkdir(parents=True, exist_ok=True)
     cfg = json.loads(args.config.read_text())
@@ -86,7 +91,7 @@ def main(argv=None):
         baseline = all_rules(cfg['budget'])
         build = lambda: build_network(args.network, ts, args.repo, cfg['weight_seed'])
         if args.stage == 'prepare':
-            from run_llm_strategy import ensure_context
+            from experiments.run_llm_strategy import ensure_context
             from llm_strategy import request_strategy
             from graph_context import graph_context
             graph, source, info = build()
@@ -96,13 +101,32 @@ def main(argv=None):
             context = ensure_context(args.repo.resolve())
             static = json.loads(context.read_text())
             save(args.out / 'catalog.json', static['catalog'])
-            request_strategy(graph, None, context, args.out, cfg['budget'], cfg['alpha'],
-                             cfg['max_phases'], source, dry_run=True)
-            # A complete baseline preflight happens before any paid call for this network.
-            result, observed = optimize(ts, graph, baseline, cfg['alpha'],
-                                         args.out / 'preflight_trace.json', cfg['budget'])
+            save(args.out / 'static_context.json', static)
+            # A complete all-rule preflight happens before any paid call for this network.
+            if cfg.get('search_mode') == 'checkpoint':
+                from checkpoint_strategy import CheckpointStrategist
+                controller = CheckpointStrategist(cfg['models'][0], cfg, context, source,
+                    args.out / 'checkpoint_preflight', dry_run=True)
+                started = time.perf_counter()
+                result = ts.optimize_with_checkpoints(graph, controller, budget=cfg['budget'],
+                    checkpoint_interval=cfg['checkpoint_interval'], alpha=cfg['alpha'],
+                    trace_file=str(args.out / 'preflight_trace.json'))
+                observed = search_observation(result, args.out / 'preflight_trace.json',
+                                               cfg['budget'], time.perf_counter() - started)
+                first = args.out / 'checkpoint_preflight/checkpoints/expansion_0000'
+                for filename in ('request.json', 'request_metadata.json'):
+                    save(args.out / filename, json.loads((first / filename).read_text()))
+                report['checkpoint_preflight_model_calls'] = controller.model_calls
+            else:
+                request_strategy(graph, None, context, args.out, cfg['budget'], cfg['alpha'],
+                                 cfg['max_phases'], source, dry_run=True)
+                result, observed = optimize(ts, graph, baseline, cfg['alpha'],
+                                             args.out / 'preflight_trace.json', cfg['budget'])
             observed['measured_ms'] = result.run_time()
             report['baseline_preflight'] = observed
+        elif args.stage == 'checkpoint':
+            from checkpoint_worker import evaluate_checkpoint_trial
+            evaluate_checkpoint_trial(ts, build, cfg, args, report)
         else:
             from llm_strategy import validate_strategy
             if args.prepared is None:

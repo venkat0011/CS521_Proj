@@ -553,6 +553,24 @@ cdef class PyGraph:
             alpha, c_budgets, c_rules, print_subst, c_trace)
         return PyGraph(ctypes.cast(<unsigned long long>result, ctypes.c_void_p))
 
+    def optimize_checkpointed(self, float alpha, int budget, int interval,
+                              callback, bool print_subst=False, trace_file=""):
+        cdef string c_trace = str(trace_file).encode('utf-8')
+        cdef Graph* result
+        state = {'callback': callback, 'error': None}
+        try:
+            result = self.p_graph.optimize_checkpointed(
+                alpha, budget, interval, _checkpoint_callback, <void*>state,
+                print_subst, c_trace)
+        except Exception:
+            if state['error'] is not None:
+                raise state['error']
+            raise
+        finally:
+            # The native optimizer consumes this graph even on a callback error.
+            self.p_graph = NULL
+        return PyGraph(ctypes.cast(<unsigned long long>result, ctypes.c_void_p))
+
     def get_operator_list(self):
         cdef Op ops[4192]
         cdef int numOps = self.p_graph.get_operator_list(ops, 4192)
@@ -675,3 +693,23 @@ cdef class PyGraph:
             return [0]
         else:
            assert False, 'Internal error: unknow attribute {}'.format(attrname)
+
+
+cdef int _checkpoint_callback(void* raw_graph, const string& progress,
+                             vector[int]& selected, void* raw_state):
+    state = <object>raw_state
+    cdef string progress_copy = progress
+    cdef bytes progress_bytes = progress_copy
+    cdef PyGraph view = PyGraph(ctypes.cast(<unsigned long long>raw_graph, ctypes.c_void_p))
+    try:
+        indices = state['callback'](view, progress_bytes.decode('utf-8'))
+        selected.clear()
+        for index in indices:
+            selected.push_back(index)
+        return 0
+    except BaseException as exc:
+        state['error'] = exc
+        return -1
+    finally:
+        # Borrowed view: the native search owns the graph throughout the callback.
+        view.p_graph = NULL

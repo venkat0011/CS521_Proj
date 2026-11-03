@@ -12,7 +12,8 @@
 The model produces the whole plan before search starts. It may choose one or
 several phases; phases do not involve model calls or feedback. This is a first
 one-shot experiment, not the later offline strategy-evolution loop across
-training graphs. Online feedback is not implemented.
+training graphs. The separate [checkpoint mode](../benchmarks/CHECKPOINTS.md)
+implements online feedback.
 
 ## Inspect the prompt without an API call
 
@@ -20,12 +21,12 @@ In the project directory of your Colab GPU terminal:
 
 ```sh
 git pull --ff-only
-python3 taso/baseline/setup_and_run.py --experiment llm --dry-run
+python3 taso/run_experiment.py --experiment llm --dry-run
 ```
 
 The runner builds TASO if necessary, constructs the small CNN, extracts the
 input and saves a prompt. The console prints the new run directory under
-`taso/baseline/results/llm/<run>/`. Open `request.txt` to read the exact input.
+`taso/results/one_shot_smoke/<run>/`. Open `request.txt` to read the exact input.
 No OpenRouter key is required for this mode.
 
 ## Make one DeepSeek V4 Pro request and evaluate
@@ -36,7 +37,7 @@ Enter your key without displaying it or saving it in shell history:
 read -rsp "OpenRouter API key: " OPENROUTER_API_KEY
 export OPENROUTER_API_KEY
 printf '\n'
-python3 taso/baseline/setup_and_run.py --experiment llm
+python3 taso/run_experiment.py --experiment llm
 ```
 
 Default model ID: `deepseek/deepseek-v4-pro`.
@@ -78,8 +79,8 @@ Each run has its own directory, preserving earlier attempts:
 To rerun a saved strategy without spending on another model request:
 
 ```sh
-python3 taso/baseline/setup_and_run.py --experiment llm \
-  --strategy-file /content/CS521_Proj/taso/baseline/results/llm/RUN_ID/strategy.json
+python3 taso/run_experiment.py --experiment llm \
+  --strategy-file /content/CS521_Proj/taso/results/one_shot_smoke/RUN_ID/strategy.json
 ```
 
 Incomplete/token-limited responses stop the run. Inspect the response; you can
@@ -94,7 +95,7 @@ paid attempt. Reasoning models may spend output tokens before returning JSON.
 - prompt_template.txt: human-readable template.
 - llm_strategy.py: assemble messages and validate a returned phase schedule.
 - openrouter_client.py: standard-library HTTP adapter, key from environment.
-- ../baseline/run_llm_strategy.py: one-shot generation and evaluation entry point.
+- ../experiments/run_llm_strategy.py: one-shot generation and evaluation entry point.
 
 The default model-source section is the real TASO CNN builder. We do not invent
 PyTorch source for a model that was built in TASO. An actual model source file

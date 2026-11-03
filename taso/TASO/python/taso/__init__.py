@@ -952,3 +952,40 @@ def optimize_with_strategy(graph, strategy, alpha=1.05, print_subst=False, trace
     from .strategy import compile_strategy
     budgets, rules = compile_strategy(strategy, alpha=alpha)
     return graph.optimize_scheduled(alpha, budgets, rules, print_subst, trace_file)
+
+
+def optimize_with_checkpoints(graph, select_strategy, budget=100,
+                              checkpoint_interval=25, alpha=1.05,
+                              print_subst=False, trace_file=""):
+    """Online policy updates on the SAME native queue at 0, interval, 2*interval...
+
+    select_strategy(borrowed_graph, progress_dict) returns a single-phase strategy
+    for the next chunk only. Never retain the borrowed graph past that callback.
+    Queue exhaustion terminates early; skipped rules are not replayed. This is
+    in-memory continuation, not a checkpoint that survives a process crash.
+    Consumes the input graph, like optimize_with_strategy.
+    """
+    import json
+    from .strategy import compile_strategy
+    for name, value in [('budget', budget), ('checkpoint_interval', checkpoint_interval)]:
+        if type(value) is not int or not 1 <= value <= 2**31 - 1:
+            raise ValueError(name + ' must be a positive integer <= INT_MAX')
+    if not callable(select_strategy):
+        raise ValueError('select_strategy must be callable')
+    compile_strategy({'schema_version': 1, 'name': 'validation', 'phases': [
+        {'name': 'all', 'rule_ids': 'all', 'expansion_budget': budget}]}, alpha)
+
+    def choose(live_graph, raw_progress):
+        progress = json.loads(raw_progress)
+        consumed = progress['expansions']
+        chunk = min(checkpoint_interval, budget - consumed)
+        progress.update(total_budget=budget, budget_remaining=budget - consumed,
+                        checkpoint_interval=checkpoint_interval, next_expansion_budget=chunk)
+        strategy = select_strategy(live_graph, progress)
+        budgets, rules = compile_strategy(strategy, alpha)
+        if budgets != [chunk]:
+            raise ValueError('Checkpoint strategy must have one phase with the exact next-chunk budget')
+        return rules[0]
+
+    return graph.optimize_checkpointed(alpha, budget, checkpoint_interval,
+                                      choose, print_subst, trace_file)

@@ -29,10 +29,12 @@ def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--repo', type=Path, default=HERE.parent / 'TASO')
     parser.add_argument('--config', type=Path, default=HERE / 'config.json')
-    parser.add_argument('--out', type=Path, default=HERE.parent / 'baseline/results')
+    parser.add_argument('--out', type=Path, default=HERE.parent / 'results')
     parser.add_argument('--batch-dir', type=Path, help='Stable results folder; resume the same batch here')
     parser.add_argument('--model', action='append', help='Repeat to compare multiple OpenRouter model IDs')
     parser.add_argument('--max-tokens', type=int)
+    parser.add_argument('--checkpoint-interval', type=int, nargs='?', const=25,
+                        help='Enable online feedback every N graph expansions (e.g. 25, 10 or 5)')
     parser.add_argument('--dry-run', action='store_true')
     parser.add_argument('--plan-only', action='store_true')
     parser.add_argument('--summarize', action='store_true', help='Rebuild tables/plots from saved trial files')
@@ -67,6 +69,12 @@ def validate_config(cfg):
             not isinstance(model, str) or (value is not None and not isinstance(value, str))
             for model, value in overrides.items()):
         raise ValueError('reasoning_effort_overrides must map model IDs to strings or null')
+    if cfg.get('search_mode', 'one_shot') not in ('one_shot', 'checkpoint'):
+        raise ValueError('Unknown search_mode')
+    if cfg.get('search_mode') == 'checkpoint':
+        interval = cfg.get('checkpoint_interval')
+        if type(interval) is not int or not 1 <= interval <= 2**31 - 1:
+            raise ValueError('checkpoint_interval must be a positive integer <= INT_MAX')
     return cfg
 
 
@@ -75,8 +83,10 @@ def model_directory(network, model):
 
 
 def source_hashes(repo):
-    files = sorted((HERE).glob('*.py')) + [HERE / 'config.json', HERE.parent / 'baseline/run_llm_strategy.py']
-    files += sorted((HERE.parent / 'llm_context').glob('*.py')) + [HERE.parent / 'llm_context/prompt_template.txt']
+    files = sorted((HERE).glob('*.py')) + [HERE / 'config.json', HERE.parent / 'run_experiment.py']
+    files += sorted((HERE.parent / 'experiments').glob('*.py'))
+    files += sorted((HERE.parent / 'llm_context').glob('*.py'))
+    files += sorted((HERE.parent / 'llm_context').glob('*prompt_template.txt'))
     hashes = {str(path.relative_to(PROJECT)): hashlib.sha256(path.read_bytes()).hexdigest() for path in files}
     for folder in ('examples', 'src/core', 'include/taso', 'python/taso'):
         for path in sorted((repo / folder).rglob('*')):
@@ -86,12 +96,14 @@ def source_hashes(repo):
     return hashes
 
 
-def run_worker(stage, network, directory, batch, cfg, repo, trial=1):
+def run_worker(stage, network, directory, batch, cfg, repo, trial=1, model=None):
     directory.mkdir(parents=True, exist_ok=True)
     command = [sys.executable, str(HERE / 'worker.py'), '--stage', stage,
                '--network', network, '--repo', str(repo), '--out', str(directory),
                '--config', str(batch / 'config.json'), '--trial', str(trial),
                '--prepared', str(batch / 'prepared' / network)]
+    if model is not None:
+        command.extend(['--model', model])
     print(f'[{network}] {stage}; log: {directory / "worker.log"}', flush=True)
     code, error = None, None
     with (directory / 'worker.log').open('w') as log:
@@ -136,6 +148,38 @@ def run_trial(network, model, trial, batch, cfg, repo, retry_evaluation=False):
         status = report['status'] = 'pending'
     if status == 'completed' or (status.startswith('failed') and not
                                (retry_evaluation and status == 'failed_evaluation')):
+        return report
+    if cfg.get('search_mode') == 'checkpoint':
+        marker = out / 'checkpoint_execution.json'
+        if marker.exists():
+            result_path = out / 'worker_result.json'
+            prior = json.loads(result_path.read_text()) if result_path.exists() else {}
+            if prior.get('status') != 'completed':
+                prior.update(status='failed',
+                    error='Interrupted checkpoint trial: native state was in memory; no automatic API retry.')
+            worker = prior
+        else:
+            report.update(status='evaluating', search_mode='checkpoint',
+                          checkpoint_interval=cfg['checkpoint_interval'])
+            save(path, report)
+            save(marker, {'status': 'started', 'model': model})
+            worker = run_worker('checkpoint', network, out, batch, cfg, repo, trial, model=model)
+        decisions_path = out / 'checkpoints.json'
+        decisions = json.loads(decisions_path.read_text()) if decisions_path.exists() else []
+        inference_path = out / 'inference_metadata.json'
+        inference = worker.get('inference')
+        if inference_path.exists():
+            inference = json.loads(inference_path.read_text())
+        report.update(evaluation=worker, inference=inference,
+                      model_calls=max(worker.get('model_calls', 0), sum(r.get('model_calls', 0) for r in decisions)),
+                      status='completed' if worker.get('status') == 'completed' else 'failed_evaluation')
+        report['interrupted_attempts'] = sum(r.get('status') == 'started' for r in decisions)
+        if report['status'] != 'completed':
+            report['error'] = worker.get('error', 'Checkpoint worker failed; inspect worker.log')
+        else:
+            report.pop('error', None)
+        save(path, report)
+        print(f"[{network}] {model} checkpoint trial {trial}/{cfg['trials']}: {report['status']}", flush=True)
         return report
     prepared = batch / 'prepared' / network
     catalog = json.loads((prepared / 'catalog.json').read_text())
@@ -206,9 +250,18 @@ def main(argv=None):
         cfg['models'] = args.model
     if args.max_tokens is not None:
         cfg['max_tokens'] = args.max_tokens
+    if args.checkpoint_interval is not None:
+        cfg.update(search_mode='checkpoint', checkpoint_interval=args.checkpoint_interval)
     validate_config(cfg)
+    if cfg.get('search_mode') == 'checkpoint' and args.retry_evaluation:
+        raise ValueError('--retry-evaluation cannot resume in-memory checkpoint trials; use a new batch')
+    calls_per_trial = ((cfg['budget'] - 1) // cfg['checkpoint_interval'] + 1
+                       if cfg.get('search_mode') == 'checkpoint' else 1)
     plan = {'networks': cfg['networks'], 'models': cfg['models'], 'trials_per_pair': cfg['trials'],
-            'max_model_calls': len(cfg['networks']) * len(cfg['models']) * cfg['trials'],
+            'max_model_calls': len(cfg['networks']) * len(cfg['models']) * cfg['trials'] * calls_per_trial,
+            'max_model_calls_per_trial': calls_per_trial,
+            'search_mode': cfg.get('search_mode', 'one_shot'),
+            'checkpoint_interval': cfg.get('checkpoint_interval'),
             'budget': cfg['budget'], 'alpha': cfg['alpha'],
             'model_settings': {model: resolve_settings(
                 model, cfg['temperature'], cfg.get('reasoning_effort'),
@@ -218,7 +271,8 @@ def main(argv=None):
         return 0
     repo = args.repo.resolve()
     stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
-    batch = (args.batch_dir or args.out / 'suite' / stamp).resolve()
+    mode_folder = 'checkpoint' if cfg.get('search_mode') == 'checkpoint' else 'one_shot'
+    batch = (args.batch_dir or args.out / mode_folder / stamp).resolve()
     batch.mkdir(parents=True, exist_ok=True)
     contract = {'config': cfg, 'source_sha256': source_hashes(repo)}
     manifest_path = batch / 'manifest.json'

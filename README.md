@@ -2,7 +2,7 @@
 
 Investigating LLM-guided tensor graph search using TASO and, later, Tensat.
 
-The [four-network experiment](taso/benchmarks/README.md) compares TASO and LLM
+The [three-network, multi-model experiment](taso/benchmarks/README.md) compares TASO and LLM
 schedules with 100 graph expansions and five independent LLM trials per network.
 It saves every trial, full search traces, distribution statistics and dot/box plots.
 
@@ -10,7 +10,11 @@ It saves every trial, full search traces, distribution statistics and dot/box pl
 
 - `taso/TASO/`: vendored upstream TASO source, tracked as regular files.
 - `taso/llm_context/`: one-time rule/source preparation and runtime graph/LLM interfaces.
-- `taso/baseline/`: tiny vanilla TASO test and Python terminal setup script.
+- `taso/run_experiment.py`: shared build/setup and experiment launcher.
+- `taso/baseline/`: vanilla TASO smoke test and compatibility entry points.
+- `taso/experiments/`: manual-strategy and one-shot small-CNN smoke scripts.
+- `taso/benchmarks/`: paired one-shot/checkpoint experiment runners and configurations.
+- `taso/results/`: new experiment outputs, grouped by mode.
 - A separate Tensat folder will be added later.
 
 ## Start with vanilla TASO
@@ -58,7 +62,7 @@ each machine rather than copying them. CUDA/compilers remain host dependencies.
 
 ```sh
 git pull --ff-only
-python3 taso/baseline/setup_and_run.py --experiment manual
+python3 taso/run_experiment.py --experiment manual
 ```
 
 This rebuilds TASO, then compares all-rule controls with the hand-written
@@ -71,10 +75,37 @@ valid search-quality reference.
 ## First LLM-generated strategy
 
 ```sh
-python3 taso/baseline/setup_and_run.py --experiment llm --dry-run
+python3 taso/run_experiment.py --experiment llm --dry-run
 ```
 
 This saves the actual prompt without an API call. With `OPENROUTER_API_KEY`
 set in the terminal, omit `--dry-run` to generate one strategy using DeepSeek
 V4 Pro through OpenRouter and compare it with all-rule search. See
 `taso/llm_context/README.md` for key entry, saved outputs and strategy reuse.
+
+Online feedback: [configurable expansion checkpoints](taso/benchmarks/CHECKPOINTS.md)
+(`--checkpoint-interval 25`, or 10/5). Omitting the option retains one-shot mode.
+
+## Experiment naming and outputs
+
+A baseline is the all-rules TASO control. One-shot and checkpoint runs are LLM
+experiments, each with its own baseline comparison. New commands use the neutral
+`taso/run_experiment.py` entry point:
+
+```sh
+python3 taso/run_experiment.py --experiment suite \
+  --suite-config taso/benchmarks/checkpoint_smoke.json --checkpoint-interval 25 \
+  --batch-dir /content/CS521_Proj/taso/results/checkpoint/checkpoint25_smoke_v2 \
+  --dry-run
+```
+
+New automatic batches go under `taso/results/one_shot/<run>/` or
+`taso/results/checkpoint/<run>/`. A supplied `--batch-dir` is used exactly as
+provided. Vanilla smoke output remains in `taso/baseline/results/`; manual smoke
+output goes to `taso/results/manual/`, and the small-CNN one-shot script writes
+`taso/results/one_shot_smoke/<run>/`.
+
+Old `taso/baseline/setup_and_run.py` commands remain compatibility aliases.
+Existing results are not moved or renamed. Use a new batch after this source
+layout change; old saved batches can still be summarized using their original
+`--batch-dir` with `run_suite.py --summarize`.

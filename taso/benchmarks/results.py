@@ -31,7 +31,7 @@ def distribution(samples):
 
 
 def flatten(report):
-    row = {k: report.get(k) for k in ('network', 'model', 'trial', 'status', 'error', 'budget', 'alpha', 'model_calls')}
+    row = {k: report.get(k) for k in ('network', 'model', 'trial', 'status', 'error', 'budget', 'alpha', 'model_calls', 'search_mode', 'checkpoint_interval')}
     inference = report.get('inference') or {}
     row['inference_seconds'] = inference.get('inference_seconds')
     for key in ('requested_temperature', 'temperature', 'requested_reasoning_effort',
@@ -48,7 +48,8 @@ def flatten(report):
     row['warmup_search_seconds'] = worker.get('warmup_search_seconds')
     row['evaluation_order'] = ','.join(worker.get('evaluation_order', []))
     for name, values in worker.get('variants', {}).items():
-        for key in ('estimated_ms', 'measured_ms', 'search_seconds', 'expansions', 'stop_reason', 'queue_remaining'):
+        for key in ('estimated_ms', 'measured_ms', 'search_seconds', 'expansions', 'stop_reason', 'queue_remaining',
+                    'optimization_wall_seconds', 'checkpoint_callback_seconds'):
             row[name + '_' + key] = values.get(key)
         for key, value in values.get('counters', {}).items():
             row[name + '_' + key] = value

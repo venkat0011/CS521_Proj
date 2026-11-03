@@ -9,15 +9,23 @@ complete three-network batch (four LLMs × three networks × five trials). Failu
 
 ## Model parameters
 
-`config.json` requests temperature `0.2` and reasoning effort `medium`, with an
-explicit `high` reasoning override for Kimi chosen for this experiment:
+`config.json` requests temperature `0.2` and reasoning effort `medium`, with
+explicit `high` reasoning overrides for DeepSeek and Kimi:
 
-| OpenRouter model ID | Temperature sent | Reasoning sent |
-|---|---|---|
-| `google/gemini-4-argon` | `0.2` | `medium` |
-| `anthropic/claude-opus-5.5` | omitted (provider default) | `medium` |
-| `openai/gpt-5.3-codex` | omitted (provider default) | `medium` |
-| `moonshotai/kimi-k3.1-pro` | omitted (provider default) | `high` |
+| Category | OpenRouter model ID | Temperature sent | Reasoning sent |
+|---|---|---|---|
+| Open-weight | `deepseek/deepseek-v4-pro` | `0.2` | `high` |
+| Open-weight | `moonshotai/kimi-k3.1-pro` | omitted (provider default) | `high` |
+| Proprietary | `openai/gpt-5.3-codex` | omitted (provider default) | `medium` |
+| Proprietary | `google/gemini-3.8-flash` | `0.2` | `medium` |
+
+The default batch excludes Claude Opus and Gemini Argon. Their profiles remain
+available for explicitly selected runs. Flash's temperature parameter currently
+routes to compatible Google AI Studio endpoints under strict parameter routing;
+endpoints that do not advertise temperature support are excluded.
+[Flash endpoint capabilities](https://openrouter.ai/api/v1/models/google/gemini-3.8-flash/endpoints)
+and [Google's thinking levels](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash)
+were verified for this update.
 
 Capabilities were checked on 2026-10-31 against OpenRouter's
 [model catalog](https://openrouter.ai/api/v1/models) and per-model endpoint lists.
@@ -36,9 +44,15 @@ labels are provider controls; equal labels do not imply equal compute across LLM
 no automatic retry or increase in this limit.
 
 Standalone legacy DeepSeek calls retain their existing default reasoning.
-If selecting DeepSeek in this suite, set an explicit reasoning override: `null`
-leaves reasoning at the provider default, while `high` requests high. Its current
-profile does not support `medium`.
+The new suite explicitly requests `high` for DeepSeek; its profile does not
+support `medium`. Earlier provider-default DeepSeek results remain available in
+their original batches. This new configuration starts fresh trial slots for all
+selected models; it does not import old trials or guarantee the old default effort.
+
+The default one-shot mode makes one strategy request per trial.
+[Online checkpoint mode](CHECKPOINTS.md) is enabled with `--checkpoint-interval`
+and supports intervals such as 25, 10 and 5 expansions. Prompt compression is
+still a separate future experiment.
 
 ## Run in the Colab GPU terminal
 
@@ -46,8 +60,8 @@ From the project root, first prepare the three actual prompts and exercise each
 network with all-rule TASO. This step makes no model calls:
 
 ```bash
-python3 taso/baseline/setup_and_run.py --experiment suite --dry-run \
-  --batch-dir taso/baseline/results/multi_model_100_v1
+python3 taso/run_experiment.py --experiment suite --dry-run \
+  --batch-dir taso/results/one_shot/budget_models_100_v2
 ```
 
 The first invocation builds the updated TASO bindings and installs the plotting
@@ -55,8 +69,8 @@ dependency. Check the `prepared/<network>/worker_result.json` files. Then run:
 
 ```bash
 export OPENROUTER_API_KEY="your-key"
-python3 taso/baseline/setup_and_run.py --experiment suite \
-  --batch-dir taso/baseline/results/multi_model_100_v1
+python3 taso/run_experiment.py --experiment suite \
+  --batch-dir taso/results/one_shot/budget_models_100_v2
 ```
 
 Keep the key in your terminal environment. It is never written to result files.
@@ -65,11 +79,11 @@ Running it again resumes unfinished work and skips completed or failed model
 calls. A failed GPU evaluation can explicitly be retried without another API call:
 
 ```bash
-python3 taso/baseline/setup_and_run.py --experiment suite --retry-evaluation \
-  --batch-dir taso/baseline/results/multi_model_100_v1
+python3 taso/run_experiment.py --experiment suite --retry-evaluation \
+  --batch-dir taso/results/one_shot/budget_models_100_v2
 ```
 
-Use a new batch directory for this update; do not resume an old DeepSeek/GPT batch.
+Use a new batch directory for this update; do not resume an old model batch.
 Configuration and source hashes are frozen for a batch. If either changes, use
 a new results directory. An interrupted API request without a saved valid
 strategy becomes a failed trial on resume; its request is never silently repeated.
@@ -82,6 +96,14 @@ To inspect the plan locally without a GPU or API call:
 
 ```bash
 python3 taso/benchmarks/run_suite.py --plan-only
+```
+
+To run only Flash (15 calls across three networks), use a separate directory:
+
+```bash
+python3 taso/run_experiment.py --experiment suite \
+  --model google/gemini-3.8-flash \
+  --batch-dir taso/results/one_shot/flash_100_v2
 ```
 
 To add LLMs, copy `config.json` and edit `models`, then pass
@@ -115,7 +137,7 @@ After downloading the batch, regenerate its tables/figures without TASO or a GPU
 ```bash
 python3 -m pip install -r taso/benchmarks/requirements.txt
 python3 taso/benchmarks/run_suite.py --summarize \
-  --batch-dir taso/baseline/results/multi_model_100_v1
+  --batch-dir taso/results/one_shot/budget_models_100_v2
 ```
 
 Quartiles use linear interpolation at `(n-1)*p`. Standard deviation uses `n-1`
@@ -164,3 +186,12 @@ examples use 100 for ResNeXt-50/NASNet-A and 30 for Inception-v3; this suite use
 100 for all three as requested. The scheduled API enforces an exact upper bound,
 avoiding the legacy API's additional expansion. SqueezeNet and Inception-v3
 were not among the five architectures evaluated in TASO's original paper.
+
+## Folder names
+
+`baseline` in a trial's JSON/trace means its all-rules TASO control. The suite
+itself is an LLM experiment and uses the neutral `taso/run_experiment.py` launcher.
+With no explicit `--batch-dir`, new batches are grouped under
+`taso/results/one_shot/<run>/` or `taso/results/checkpoint/<run>/`. Historic results
+under `taso/baseline/results/` remain readable at their original paths. Do not
+reuse an old frozen batch for new evaluations after this source change.

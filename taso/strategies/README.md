@@ -3,7 +3,7 @@
 Run after pulling the update in a Linux GPU environment:
 
 ```sh
-python3 taso/baseline/setup_and_run.py --experiment manual
+python3 taso/run_experiment.py --experiment manual
 ```
 
 This rebuilds the native library and Python extension before running the demo.
@@ -48,7 +48,7 @@ GPU measurements happen only after the returned graph is selected.
 
 ## Outputs
 
-`taso/baseline/results/manual_summary.json` contains comparisons and check
+`taso/results/manual_summary.json` contains comparisons and check
 results. `all_rules_trace.json`, `split_all_rules_trace.json`, and
 `manual_trace.json` record phase expansions and per-rule attempts, recursive
 match checks, complete matches, generated/admitted graphs and rejection counts.

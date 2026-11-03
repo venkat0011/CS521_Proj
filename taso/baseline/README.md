@@ -15,7 +15,8 @@ The runner checks Linux/NVIDIA GPU, selects an existing CUDA 12 toolkit or
 installs CUDA 12.6 alongside newer toolkits, installs missing system build tools,
 creates `taso/.venv` using the Python version pinned in `taso/.python-version`, installs the initial dependency set in that isolated
 Python environment, builds TASO's C++ library, installs the Python bindings,
-and runs `run_baseline.py` on Input -> Conv -> ReLU.
+and runs `run_baseline.py` on Input -> Conv -> ReLU. The local setup entry point
+delegates to the shared `taso/run_experiment.py` implementation.
 
 This initial setup targets Linux x86_64, managed Python 3.11.17 and CUDA 12 with
 NVIDIA cuDNN 8.9.7.29 (https://pypi.org/project/nvidia-cudnn-cu12/8.9.7.29/).
@@ -71,9 +72,19 @@ and venv -> packages -> TASO native library -> Python bindings -> baseline.
 CUDA 12 is the initial tested-for setup target, not a proven upper bound of
 TASO compatibility. Full GPU execution is still awaiting verification.
 
-## Manual search strategy experiment
+## LLM and manual experiments
 
-Run `python3 taso/baseline/setup_and_run.py --experiment manual` to rebuild
-and compare a hand-written fusion-first schedule with all-rule controls on a
-small branched convolution network. See `../strategies/README.md` for exact
-semantics, assertions/build correction, checks, and limitations.
+The baseline folder is for the vanilla TASO smoke test. The shared launcher is
+now `../run_experiment.py`. Strategy smoke implementations live in
+`../experiments/`; paired one-shot/checkpoint trials live in `../benchmarks/`.
+
+```sh
+python3 taso/run_experiment.py --experiment manual
+python3 taso/run_experiment.py --experiment llm --dry-run
+```
+
+New experiment outputs go under `taso/results/`. In a paired trial, `baseline`
+still names its all-rules TASO control. The complete LLM experiment is not called
+a baseline. Old commands remain aliases, and historical result folders are left
+in place. See [paired experiments](../benchmarks/README.md) and
+[checkpoints](../benchmarks/CHECKPOINTS.md).

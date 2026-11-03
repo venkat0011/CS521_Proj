@@ -20,6 +20,7 @@
 #include <chrono>
 #include <cmath>
 #include <iomanip>
+#include <sstream>
 #include <stdexcept>
 #include "taso/search_schedule.h"
 using namespace std;
@@ -406,6 +407,48 @@ TensorHandle Graph::new_weight(const Tensor& weight)
   return t;
 }
 
+// Shared trace writer for scheduled and online checkpoint searches.
+static void write_search_trace(std::ostream& trace, size_t rule_count,
+    const std::vector<int>& phase_budgets,
+    const std::vector<std::vector<RewriteStats> >& stats,
+    const std::vector<int>& expanded, float initialCost, float bestCost,
+    int expansions, size_t queue_size, const char* stop_reason,
+    double callback_seconds)
+{
+  trace << std::setprecision(12);
+    trace << "{\"schema_version\":1,\"rule_count\":" << rule_count
+          << ",\"initial_cost_ms\":" << initialCost
+          << ",\"best_search_cost_ms\":" << bestCost
+          << ",\"checkpoint_callback_seconds\":" << callback_seconds
+          << ",\"expansions\":" << expansions
+          << ",\"queue_remaining\":" << queue_size
+          << ",\"stop_reason\":\"" << stop_reason
+          << "\",\"phases\":[";
+    for (size_t p = 0; p < phase_budgets.size(); ++p) {
+      if (p) trace << ",";
+      trace << "{\"index\":" << p << ",\"budget\":" << phase_budgets[p]
+            << ",\"expansions\":" << expanded[p] << ",\"rules\":[";
+      for (size_t r = 0; r < rule_count; ++r) {
+        if (r) trace << ",";
+        const RewriteStats& v = stats[p][r];
+        trace << "{\"rule_index\":" << r << ",\"attempts\":" << v.attempts
+              << ",\"match_checks\":" << v.match_checks
+              << ",\"full_matches\":" << v.full_matches
+              << ",\"operator_rejections\":" << v.operator_rejections
+              << ",\"output_rejections\":" << v.output_rejections
+              << ",\"generated\":" << v.generated
+              << ",\"cycle_rejections\":" << v.cycle_rejections
+              << ",\"cost_rejections\":" << v.cost_rejections
+              << ",\"size_rejections\":" << v.size_rejections
+              << ",\"duplicates\":" << v.duplicates
+              << ",\"admitted\":" << v.admitted
+              << ",\"seconds\":" << v.seconds << "}";
+      }
+      trace << "]}";
+    }
+    trace << "]}\n";
+}
+
 Graph* Graph::optimize(float alpha, int budget, bool print_subst)
 {
   // Preserve legacy expansion count (upstream used counter > budget).
@@ -418,6 +461,31 @@ Graph* Graph::optimize(float alpha, int budget, bool print_subst)
 Graph* Graph::optimize_scheduled(float alpha, const std::vector<int>& phase_budgets,
     const std::vector<std::vector<int> >& phase_rules, bool print_subst,
     const std::string& trace_file)
+{
+  return optimize_search(alpha, phase_budgets, phase_rules, print_subst,
+                         trace_file, NULL, NULL);
+}
+
+Graph* Graph::optimize_checkpointed(float alpha, int budget, int interval,
+    CheckpointCallback callback, void* context, bool print_subst,
+    const std::string& trace_file)
+{
+  if (budget <= 0 || interval <= 0 || callback == NULL)
+    throw std::invalid_argument("Positive budget/interval and a callback are required");
+  std::vector<int> budgets;
+  for (int remaining = budget; remaining > 0; ) {
+    const int chunk = remaining < interval ? remaining : interval;
+    budgets.push_back(chunk);
+    remaining -= chunk;
+  }
+  return optimize_search(alpha, budgets,
+      std::vector<std::vector<int> >(budgets.size()), print_subst,
+      trace_file, callback, context);
+}
+
+Graph* Graph::optimize_search(float alpha, const std::vector<int>& phase_budgets,
+    const std::vector<std::vector<int> >& phase_rules, bool print_subst,
+    const std::string& trace_file, CheckpointCallback callback, void* context)
 {
   SearchSchedule schedule(phase_budgets, phase_rules);
   if (!std::isfinite(alpha) || alpha < 1.0f)
@@ -479,7 +547,7 @@ Graph* Graph::optimize_scheduled(float alpha, const std::vector<int>& phase_budg
     if (!trace) throw std::runtime_error("Cannot open search trace file");
     trace << std::setprecision(12);
   }
-  const bool profiling = trace.is_open();
+  const bool profiling = trace.is_open() || callback != NULL;
   std::vector<std::vector<RewriteStats> > stats(
       phase_budgets.size(), std::vector<RewriteStats>(xfers.size()));
   std::vector<int> expanded(phase_budgets.size(), 0);
@@ -488,13 +556,51 @@ Graph* Graph::optimize_scheduled(float alpha, const std::vector<int>& phase_budg
   candidates.push(this);
   hashmap.insert(hash());
   Graph* bestGraph = this;
+  // Exception-safe ownership also covers a failed online Python/API callback.
+  struct GraphOwner {
+    std::priority_queue<Graph*, std::vector<Graph*>, GraphCompare>& queue;
+    Graph*& best;
+    bool active;
+    GraphOwner(std::priority_queue<Graph*, std::vector<Graph*>, GraphCompare>& q,
+               Graph*& b) : queue(q), best(b), active(true) {}
+    ~GraphOwner() {
+      if (!active) return;
+      while (!queue.empty()) {
+        Graph* graph = queue.top(); queue.pop();
+        if (graph != best) delete graph;
+      }
+      delete best;
+    }
+  } graph_owner(candidates, bestGraph);
   float bestCost = total_cost();
   const float initialCost = bestCost;
   const int maxNumOps = inEdges.size();
   print_costs();
   printf("\n        ===== Start Cost-Based Backtracking Search =====\n");
-  size_t phase = 0;
+  size_t phase = 0, previous_phase = phase_budgets.size();
+  double callback_seconds = 0;
+  std::vector<int> online_rules;
   while (!candidates.empty() && schedule.next(phase)) {
+    if (callback != NULL && phase != previous_phase) {
+      // Include a better, newly generated queue head in the observation without
+      // removing it or changing graph ownership/ordering at the checkpoint.
+      Graph* snapshot = candidates.top()->total_cost() < bestCost
+          ? candidates.top() : bestGraph;
+      std::ostringstream progress;
+      write_search_trace(progress, xfers.size(), phase_budgets, stats, expanded,
+          initialCost, snapshot->total_cost(), schedule.total() - 1,
+          candidates.size(), "checkpoint", callback_seconds);
+      online_rules.clear();
+      const auto policy_start = std::chrono::steady_clock::now();
+      const int status = callback(snapshot, progress.str(), online_rules, context);
+      callback_seconds += std::chrono::duration<double>(
+          std::chrono::steady_clock::now() - policy_start).count();
+      if (status != 0) throw std::runtime_error("Checkpoint strategy callback failed");
+      for (size_t j = 0; j < online_rules.size(); ++j)
+        if (online_rules[j] < 0 || (size_t)online_rules[j] >= xfers.size())
+          throw std::invalid_argument("Checkpoint selected an unregistered rule");
+      previous_phase = phase;
+    }
     Graph* subGraph = candidates.top();
     candidates.pop();
     if (subGraph->total_cost() < bestCost) {
@@ -502,10 +608,11 @@ Graph* Graph::optimize_scheduled(float alpha, const std::vector<int>& phase_budg
       bestGraph = subGraph;
       bestCost = subGraph->total_cost();
     }
+    std::unique_ptr<Graph> expansion_owner(subGraph != bestGraph ? subGraph : NULL);
     ++expanded[phase];
     printf("        [%d] phase=%zu cost=%.4lf bestCost=%.4lf queue=%zu\n",
            schedule.total() - 1, phase, subGraph->total_cost(), bestCost, candidates.size());
-    const std::vector<int>& selected = schedule.rules(phase);
+    const std::vector<int>& selected = callback != NULL ? online_rules : schedule.rules(phase);
     const size_t count = selected.empty() ? xfers.size() : selected.size();
     for (size_t j = 0; j < count; ++j) {
       const size_t id = selected.empty() ? j : selected[j];
@@ -516,7 +623,6 @@ Graph* Graph::optimize_scheduled(float alpha, const std::vector<int>& phase_budg
       if (profiling) stats[phase][id].seconds += std::chrono::duration<double>(
           std::chrono::steady_clock::now() - start).count();
     }
-    if (subGraph != bestGraph) delete subGraph;
   }
   // A better candidate generated by the final expansion still counts as found.
   if (!candidates.empty() && candidates.top()->total_cost() < bestCost) {
@@ -524,38 +630,10 @@ Graph* Graph::optimize_scheduled(float alpha, const std::vector<int>& phase_budg
     bestGraph = candidates.top();
     bestCost = bestGraph->total_cost();
   }
-  if (profiling) {
-    trace << "{\"schema_version\":1,\"rule_count\":" << xfers.size()
-          << ",\"initial_cost_ms\":" << initialCost
-          << ",\"best_search_cost_ms\":" << bestCost
-          << ",\"expansions\":" << schedule.total()
-          << ",\"queue_remaining\":" << candidates.size()
-          << ",\"stop_reason\":\"" << (candidates.empty() ? "queue_empty" : "budget")
-          << "\",\"phases\":[";
-    for (size_t p = 0; p < phase_budgets.size(); ++p) {
-      if (p) trace << ",";
-      trace << "{\"index\":" << p << ",\"budget\":" << phase_budgets[p]
-            << ",\"expansions\":" << expanded[p] << ",\"rules\":[";
-      for (size_t r = 0; r < xfers.size(); ++r) {
-        if (r) trace << ",";
-        const RewriteStats& v = stats[p][r];
-        trace << "{\"rule_index\":" << r << ",\"attempts\":" << v.attempts
-              << ",\"match_checks\":" << v.match_checks
-              << ",\"full_matches\":" << v.full_matches
-              << ",\"operator_rejections\":" << v.operator_rejections
-              << ",\"output_rejections\":" << v.output_rejections
-              << ",\"generated\":" << v.generated
-              << ",\"cycle_rejections\":" << v.cycle_rejections
-              << ",\"cost_rejections\":" << v.cost_rejections
-              << ",\"size_rejections\":" << v.size_rejections
-              << ",\"duplicates\":" << v.duplicates
-              << ",\"admitted\":" << v.admitted
-              << ",\"seconds\":" << v.seconds << "}";
-      }
-      trace << "]}";
-    }
-    trace << "]}\n";
-  }
+  if (trace.is_open())
+    write_search_trace(trace, xfers.size(), phase_budgets, stats, expanded,
+        initialCost, bestCost, schedule.total(), candidates.size(),
+        candidates.empty() ? "queue_empty" : "budget", callback_seconds);
   while (!candidates.empty()) {
     Graph* pending = candidates.top();
     candidates.pop();
@@ -582,6 +660,7 @@ Graph* Graph::optimize_scheduled(float alpha, const std::vector<int>& phase_budg
       }
     }
   }
+  graph_owner.active = false;
   return bestGraph;
 }
 

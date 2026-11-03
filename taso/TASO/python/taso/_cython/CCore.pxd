@@ -20,6 +20,8 @@ from libcpp.vector cimport vector
 from libcpp.string cimport string
 from libcpp cimport bool
 
+ctypedef int (*CheckpointCallback)(void*, const string&, vector[int]&, void*)
+
 cdef extern from "taso/ops.h" namespace "taso":
     # This must be consistent with include/taso/ops.h
     cdef enum DataType:
@@ -264,6 +266,10 @@ cdef extern from "taso/ops.h" namespace "taso":
         Graph* optimize_scheduled(float alpha, const vector[int]& phase_budgets,
                                  const vector[vector[int]]& phase_rules,
                                  bool print_subst, const string& trace_file) except +
+
+        Graph* optimize_checkpointed(float alpha, int budget, int interval,
+                                     CheckpointCallback callback, void* context,
+                                     bool print_subst, const string& trace_file) except +
 
         int get_operator_list(Op* ops, size_t maxNumOps)
         int get_input_edges(Edge* edges, size_t guid)

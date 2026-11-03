@@ -1,5 +1,7 @@
 // Synthetic graph backend for testing the production search loop without CUDA.
 #include <map>
+#include <memory>
+#include <sstream>
 #include <queue>
 #include <set>
 #include <vector>
@@ -15,6 +17,7 @@
 #include "taso/search_schedule.h"
 using namespace std;
 namespace taso {
+typedef int (*CheckpointCallback)(void*, const std::string&, std::vector<int>&, void*);
 enum PaddingMode { PD_MODE_SAME, PD_MODE_VALID };
 enum ActiMode { AC_MODE_NONE, AC_MODE_RELU };
 struct Model {};
@@ -42,6 +45,8 @@ public:
  void print_costs() {}
  Graph* preprocess_weights() { return new Graph(id,cost); }
  Graph* optimize(float, int, bool);
+ Graph* optimize_checkpointed(float,int,int,CheckpointCallback,void*,bool,const string&);
+ Graph* optimize_search(float,const vector<int>&,const vector<vector<int> >&,bool,const string&,CheckpointCallback,void*);
  Graph* optimize_scheduled(float,const vector<int>&,const vector<vector<int> >&,bool,const string&);
 };
 int Graph::live=0;
@@ -49,6 +54,7 @@ struct GraphCompare { bool operator()(Graph* a,Graph* b) { return a->cost > b->c
 class GraphXfer {
 public:
  static int next_id;
+ static bool chain;
  int id;
  vector<OpX*> srcOps,dstOps;
  GraphXfer() : id(next_id++ % 18) {}
@@ -62,10 +68,14 @@ public:
           set<size_t>& seen,float threshold,int,RewriteStats* stats) {
    if (stats) ++stats->match_checks;
    int child=-1; float cost=0;
-   if (graph->id==0 && id==0) { child=1; cost=8; }
-   if (graph->id==0 && id==1) { child=2; cost=9; }
-   if (graph->id==1 && id==1) { child=3; cost=5; }
-   if (graph->id==2 && id==0) { child=4; cost=4; }
+   if (chain) {
+     if (id!=17 || graph->id>=110) return;
+     child=graph->id+1; cost=10 - child * .01f;
+   }
+   if (!chain && graph->id==0 && id==0) { child=1; cost=8; }
+   if (!chain && graph->id==0 && id==1) { child=2; cost=9; }
+   if (!chain && graph->id==1 && id==1) { child=3; cost=5; }
+   if (!chain && graph->id==2 && id==0) { child=4; cost=4; }
    if (child<0) return;
    if (stats) { ++stats->full_matches; ++stats->generated; }
    if (cost>=threshold) { if(stats)++stats->cost_rejections; return; }
@@ -75,5 +85,6 @@ public:
  }
 };
 int GraphXfer::next_id=0;
+bool GraphXfer::chain=false;
 }
 using namespace taso;

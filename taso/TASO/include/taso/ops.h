@@ -62,6 +62,9 @@ typedef float DATATYPE;
 
 class Model;
 class OpBase;
+// Synchronous policy callback. The graph is borrowed for the duration of the call.
+// Return nonzero to abort; Python keeps and re-raises the original exception.
+typedef int (*CheckpointCallback)(void*, const std::string&, std::vector<int>&, void*);
 
 enum {
   GUID_INVALID = 0,
@@ -644,6 +647,14 @@ public:
   Graph* optimize_scheduled(float alpha, const std::vector<int>& phase_budgets,
                             const std::vector<std::vector<int> >& phase_rules,
                             bool print_subst, const std::string& trace_file);
+
+  Graph* optimize_checkpointed(float alpha, int budget, int interval,
+                              CheckpointCallback callback, void* context,
+                              bool print_subst, const std::string& trace_file);
+  Graph* optimize_search(float alpha, const std::vector<int>& phase_budgets,
+                        const std::vector<std::vector<int> >& phase_rules,
+                        bool print_subst, const std::string& trace_file,
+                        CheckpointCallback callback, void* context);
 
   Graph* preprocess_weights(void);
   int get_operator_list(Op* opList, size_t maxNumOps);
