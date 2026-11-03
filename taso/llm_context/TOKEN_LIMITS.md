@@ -1,8 +1,10 @@
 # Output limits and per-call usage
 
 The separate [bounded checkpoint continuation protocol](CONTINUATION.md) adds
-`--max-tokens max` with a provider-specific limit snapshot and up to three
-follow-ups. The provider-default mode below retains its original no-retry behavior.
+`--max-tokens max` with configured model-level ceilings and up to three follow-ups.
+OpenRouter selects providers automatically; missing/invalid strategies can also
+use that shared follow-up allowance. The provider-default mode below retains its
+original no-retry behavior.
 
 Use `--max-tokens provider` with `taso/run_experiment.py`, the suite runner or the
 standalone one-shot runner to omit `max_tokens` entirely from OpenRouter requests.

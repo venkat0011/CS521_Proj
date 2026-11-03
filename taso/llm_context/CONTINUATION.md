@@ -1,6 +1,6 @@
 # Bounded checkpoint continuation
 
-The new `checkpoint_continuation.json` preset implements a separate, recorded
+The `checkpoint_continuation.json` preset implements a separate, recorded
 completion protocol. The existing suite config, one-shot prompt, reasoning and
 temperature profiles, compact checkpoint prompt, native TASO search and bindings
 are unchanged. Do not rerun completed one-shot experiments for this update.
@@ -46,27 +46,34 @@ The existing Drive symlink is used as-is. The setup launcher creates/reuses the
 venv and builds TASO as usual. Completed trial slots can be skipped when reusing
 an unchanged batch, but an exited worker's native queue cannot be restored.
 
-## Initial output allowances and routing
+## Output allowances and automatic routing
 
-The checked provider-specific snapshot is in `checkpoint_completion.py`, dated
-2026-11-03. The new protocol pins these standard endpoints, with fallback
-disabled, so a lower-limit endpoint does not silently replace one and opaque
-reasoning is replayed through the same provider:
+`checkpoint_continuation_v2` lets OpenRouter choose the provider for every
+request. No provider name, allowlist, order, ignored-provider list, quantization
+selector or fallback restriction is sent. The existing `require_parameters`
+check remains so OpenRouter selects endpoints supporting the requested settings.
+The response's actual provider is recorded; it may change between attempts.
 
-| Model | Provider slug | Advertised output cap | Context | Input cap if separate |
-|---|---|---:|---:|---:|
-| DeepSeek V4 Pro | gmicloud/fp8 | 943718 | 1048576 | — |
-| Kimi K3.1 Pro | moonshotai/mxfp4 | 943718 | 1048576 | — |
-| GPT-5.3-Codex | openai | 128000 | 400000 | 272000 |
-| Gemini 3.8 Flash | google-ai-studio | 65536 | 1048576 | — |
+The model-level output/context ceilings in `checkpoint_completion.py` are dated
+2026-11-03. DeepSeek's ceiling is corrected to 393216 from an actual backend
+validation error; the earlier advertised 943718 value was rejected by GMICloud.
+The code no longer treats that advertised endpoint number as reliable.
 
-These differ from default routing in historical runs. Provider availability,
-prices and advertised limits can change. The plan and per-attempt artifacts
-record these choices, and source fingerprints freeze the snapshot for a batch.
-Unsupported/unavailable endpoint or parameter errors are reported; the code does
-not switch provider/model, change reasoning or silently lower an advertised cap.
+| Model | Configured output ceiling | Context guard | Input cap if separate |
+|---|---:|---:|---:|
+| DeepSeek V4 Pro | 393216 | 1048576 | — |
+| Kimi K3.1 Pro | 943718 | 1048576 | — |
+| GPT-5.3-Codex | 128000 | 400000 | 272000 |
+| Gemini 3.8 Flash | 65536 | 1048576 | — |
 
-The request cap is the minimum of the checked endpoint maximum, guarded remaining
+`max` means this configured model ceiling subject to guarded context space;
+it does not dynamically discover every provider's maximum. OpenRouter handles
+routing with the requested output allowance. Backend capabilities can change;
+validation errors remain explicit failures, rather than repeated identical
+parameter errors. Numeric `--max-tokens` caps remain available. All limits are
+recorded with the source snapshot for the batch.
+
+The request cap is the minimum of the configured model ceiling, guarded remaining
 context, and any explicit numeric user cap. The initial input estimate uses
 serialized UTF-8 bytes for these text requests. Later estimates conservatively
 include previous estimated/reported input, reported generated tokens and new-turn
@@ -89,27 +96,30 @@ request whose provider usage may be unknown.
 At each reached boundary TASO stays paused inside the synchronous Python callback.
 The native queue, visited set, incumbent graph and expansion counter remain alive.
 
-1. A normal `stop` returns one complete JSON strategy to the existing validator.
-   A malformed strategy fails validation without a paid repair call.
-2. A `length` response is saved, including usage and all returned response data.
-   If follow-ups remain, reusable work is appended to the same decision's history
-   and a new user message asks for one **complete replacement strategy JSON**.
-   Partial JSON fragments are never blindly concatenated or executed.
-3. `reasoning_details` are replayed unchanged, including order, signatures and
-   opaque/encrypted data, through the pinned provider. Raw `reasoning` strings
-   are replayed where applicable. For DeepSeek's readable non-tool reasoning,
-   the text is passed explicitly as unfinished-work context because the native
-   API can ignore old reasoning fields on ordinary turns.
-4. This reuses returned work; it does **not** promise exact resumption of hidden
-   reasoning. Models/providers may reason again or reject unsupported replay.
-   Unreturned reasoning cannot be recovered. No reusable work or missing token
-   usage causes an early stop rather than a blind repeated request.
+1. A normal `stop` must contain a strategy satisfying the existing schema,
+   available rule IDs and exact interval budget. Empty output, missing choices,
+   invalid JSON or invalid strategy data can use the bounded follow-up allowance.
+   A strategy is accepted only after validation succeeds.
+2. A `length` response is recorded as confirmed output-token exhaustion. Empty
+   or invalid strategies with other finish reasons are recorded separately;
+   absence alone is not evidence of token exhaustion.
+3. Returned partial answer text and readable reasoning/text summaries are reused
+   as context, asking for one **complete replacement strategy JSON**. Partial
+   JSON fragments are never blindly concatenated or executed. All original
+   response fields, including opaque or signed reasoning blocks, remain in the
+   saved API response. Provider-specific opaque/signature fields are not replayed
+   to an arbitrary next provider. Only readable work is reused across routing.
+4. With no readable work, the next attempt requests the strategy again. This is
+   recorded as `no_readable_work_retry`; it does not pretend to resume hidden
+   reasoning. Missing usage stays unknown, and context is guarded using the
+   available text size instead. These retries still count against the same limit.
 5. HTTP/provider errors 429, 500, 502, 503 and 504 can retry the same current
    history with bounded backoff. `Retry-After` is respected up to 60 seconds;
    a longer requested wait stops the checkpoint. Authentication, configuration,
-   context, content-filter and unsupported-format errors are terminal.
-6. After three follow-ups, failure stays a failure. An interruption also stops
-   the checkpoint; the runner will not launch replacement calls after restart.
+   context, content-filter and unsupported-format errors remain terminal.
+6. The original plus **three follow-ups total** is the shared limit for all retry
+   causes at one checkpoint. On exhaustion the trial fails. An interruption also
+   stops the checkpoint; the runner does not launch replacement calls on restart.
 
 Continuation history exists only inside the current decision. The next TASO
 checkpoint starts with its new compact graph/feedback and does not replay the
@@ -124,7 +134,7 @@ Each `checkpoints/expansion_XXXX/` contains:
   returned API response when available, and inference metadata. Keys/headers are
   not saved. An intent record is persisted before contacting the provider.
 - `attempts.json`, `generation.json` and trial `checkpoints.json` record every
-  attempt, action (`initial`, `continue_after_length`, `retry_provider`), replay
+  attempt, action (`initial`, `continue_after_length`, `retry_strategy`, `retry_provider`), failure kind, retry reason, replay
   mode, guarded input estimate, sent output cap, provider and status.
 - Checkpoint and trial inference metadata sum **all returned usage**, including
   truncated/provider-failed requests. `usage_missing_attempts` flags unknown
@@ -133,7 +143,7 @@ Each `checkpoints/expansion_XXXX/` contains:
 `model_calls.csv` contains one row per API attempt, including checkpoint expansion,
 attempt number, status, finish reason, sent cap, prompt/output/reasoning tokens,
 cost and latency. `trials.csv`/`summary.json` include total attempts, continuation
-and provider-retry counts, first-attempt successes, recovered checkpoint counts
+strategy-retry and provider-retry counts, first-attempt successes, recovered checkpoint counts
 and failed checkpoint decisions. Historical records without new fields remain
 readable. Count recovered graph-quality results under this new retry protocol,
 and retain first-attempt reliability and all extra token/time costs separately.

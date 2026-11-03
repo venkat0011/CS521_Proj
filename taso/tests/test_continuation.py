@@ -66,7 +66,7 @@ class ContinuationTests(unittest.TestCase):
         return runner, bodies, patch.object(openrouter_client.urllib.request, 'urlopen', side_effect=http)
 
     def test_maximum_and_model_settings_for_all_four_models(self):
-        caps = [943718, 943718, 128000, 65536]
+        caps = [393216, 943718, 128000, 65536]
         for model, cap in zip(self.cfg['models'], caps):
             with self.subTest(model=model), tempfile.TemporaryDirectory() as tmp:
                 runner, bodies, http = self.run_completion(tmp, [response()], model=model)
@@ -77,8 +77,7 @@ class ContinuationTests(unittest.TestCase):
                 self.assertEqual(bodies[0]['max_tokens'], cap)
                 expected = 'high' if model.startswith(('deepseek/', 'moonshotai/')) else 'medium'
                 self.assertEqual(bodies[0]['reasoning'], {'effort': expected})
-                self.assertEqual(bodies[0]['provider']['only'], [completion.MODEL_LIMITS[model]['provider_tag']])
-                self.assertFalse(bodies[0]['provider']['allow_fallbacks'])
+                self.assertEqual(bodies[0]['provider'], {'require_parameters': True})
                 self.assertEqual(runner.request_attempts, 1)
                 self.assertEqual(runner.metadata['continuation_requests'], 0)
                 self.assertTrue((Path(tmp) / 'attempts/attempt_01/api_response.json').exists())
@@ -101,7 +100,7 @@ class ContinuationTests(unittest.TestCase):
             self.assertEqual(runner.metadata['usage']['completion_tokens'], 220)
             self.assertAlmostEqual(runner.metadata['usage']['cost'], .02)
 
-    def test_structured_blocks_are_preserved_exactly_and_json_is_not_concatenated(self):
+    def test_raw_blocks_saved_and_portable_work_reused_without_concatenating_json(self):
         details = [{'type': 'reasoning.summary', 'summary': 'A partial decision', 'id': 'summary'},
                    {'type': 'reasoning.encrypted', 'data': 'opaque-fixture', 'id': 'signed', 'index': 1}]
         with tempfile.TemporaryDirectory() as tmp:
@@ -112,9 +111,12 @@ class ContinuationTests(unittest.TestCase):
                 text = runner(self.messages)
             self.assertEqual(json.loads(text), policy())
             replay = bodies[1]['messages'][-2]
-            self.assertEqual(replay['reasoning_details'], details)
             self.assertEqual(replay['content'], '{"schema_version":')
-            self.assertEqual(runner.attempts[1]['replay_mode'], 'structured_reasoning_replay')
+            self.assertIn('A partial decision', bodies[1]['messages'][-1]['content'])
+            self.assertNotIn('opaque-fixture', json.dumps(bodies[1]['messages']))
+            raw = json.loads((Path(tmp)/'attempts/attempt_01/api_response.json').read_text())
+            self.assertEqual(raw['choices'][0]['message']['reasoning_details'], details)
+            self.assertEqual(runner.attempts[1]['replay_mode'], 'returned_plaintext_as_context')
 
     def test_three_retries_means_exactly_four_attempts_and_all_usage_is_saved(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -161,23 +163,29 @@ class ContinuationTests(unittest.TestCase):
                     runner(self.messages)
                 self.assertEqual(len(bodies), 1)
 
-    def test_no_reusable_work_and_nonlength_finishes_stop_without_blind_retry(self):
-        for result in (response('length', content='', thought=20),
-                       response('content_filter', content='partial')):
+    def test_no_work_retries_but_content_filter_is_terminal(self):
+        for result, expected_calls in ((response('length', content='', thought=20), 2),
+                       (response('content_filter', content='partial'), 1)):
             with self.subTest(result=result), tempfile.TemporaryDirectory() as tmp:
                 runner, bodies, http = self.run_completion(tmp, [result, response()])
-                with http, self.assertRaises(RuntimeError):
-                    runner(self.messages)
-                self.assertEqual(len(bodies), 1)
+                with http:
+                    if expected_calls == 1:
+                        with self.assertRaises(RuntimeError):
+                            runner(self.messages)
+                    else:
+                        self.assertEqual(json.loads(runner(self.messages)), policy())
+                        self.assertEqual(runner.attempts[1]['replay_mode'], 'no_readable_work_retry')
+                self.assertEqual(len(bodies), expected_calls)
 
-    def test_missing_usage_stops_before_a_continuation(self):
+    def test_missing_usage_uses_conservative_text_guard_and_remains_unknown(self):
         truncated = response('length', content='{')
         truncated.pop('usage')
         with tempfile.TemporaryDirectory() as tmp:
             runner, bodies, http = self.run_completion(tmp, [truncated, response()])
-            with http, self.assertRaisesRegex(RuntimeError, 'without returned token usage'):
+            with http:
                 runner(self.messages)
-            self.assertEqual(len(bodies), 1)
+            self.assertEqual(len(bodies), 2)
+            self.assertEqual(runner.metadata['usage_missing_attempts'], 1)
 
     def test_context_guard_clamps_output_and_stops_before_an_impossible_request(self):
         limits = completion.MODEL_LIMITS['google/gemini-3.8-flash']
@@ -196,7 +204,7 @@ class ContinuationTests(unittest.TestCase):
     def test_large_generated_history_reduces_next_allowance(self):
         with tempfile.TemporaryDirectory() as tmp:
             truncated = response('length', content='{', reasoning='work', prompt=38000, output=943718, thought=943700)
-            runner, bodies, http = self.run_completion(tmp, [truncated, response()])
+            runner, bodies, http = self.run_completion(tmp, [truncated, response()], model='moonshotai/kimi-k3.1-pro')
             with http:
                 runner(self.messages)
             self.assertEqual(bodies[0]['max_tokens'], 943718)
@@ -227,13 +235,90 @@ class ContinuationTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 run_suite.validate_config(dict(self.cfg, **change))
 
-    def test_no_replacement_call_for_invalid_completed_strategy(self):
-        # A normal stop with malformed JSON is not a token-limit continuation.
+    def test_invalid_completed_strategy_retries_without_claiming_token_exhaustion(self):
         with tempfile.TemporaryDirectory() as tmp:
             runner, bodies, http = self.run_completion(tmp, [response(content='bad json'), response()])
             with http:
-                self.assertEqual(runner(self.messages), 'bad json')
-            self.assertEqual(len(bodies), 1)
+                self.assertEqual(json.loads(runner(self.messages)), policy())
+            self.assertEqual(len(bodies), 2)
+            self.assertEqual(runner.attempts[0]['failure_kind'], 'invalid_strategy')
+            self.assertEqual(runner.attempts[1]['action'], 'retry_strategy')
+            self.assertEqual(runner.metadata['finish_reason_counts'], {'stop': 2})
+            self.assertNotIn('reached its output-token limit', bodies[1]['messages'][-1]['content'])
+
+    def test_missing_strategy_with_stop_or_no_choices_is_retried_and_not_called_length(self):
+        empty = response(content='', thought=20)
+        no_choices = response(content='')
+        no_choices['choices'] = []
+        for initial in (empty, no_choices):
+            with self.subTest(initial=initial), tempfile.TemporaryDirectory() as tmp:
+                runner, bodies, http = self.run_completion(tmp, [initial, response()])
+                with http:
+                    self.assertEqual(json.loads(runner(self.messages)), policy())
+                self.assertEqual(len(bodies), 2)
+                self.assertEqual(runner.attempts[0]['failure_kind'], 'missing_strategy')
+                self.assertEqual(runner.attempts[1]['retry_reason'], 'missing_strategy')
+                self.assertEqual(runner.metadata['strategy_retries'], 1)
+                self.assertNotIn('length', runner.metadata['finish_reason_counts'])
+                self.assertNotIn('reached its output-token limit', bodies[1]['messages'][-1]['content'])
+
+    def test_invalid_strategy_exhaustion_does_not_exceed_four_attempts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner, bodies, http = self.run_completion(tmp, [response(content='bad json') for _ in range(5)])
+            with http, self.assertRaisesRegex(RuntimeError, 'after 4 API attempts'):
+                runner(self.messages)
+            self.assertEqual(len(bodies), 4)
+            self.assertEqual(runner.metadata['strategy_retries'], 3)
+            self.assertEqual(runner.metadata['finish_reason_counts'], {'stop': 4})
+            self.assertTrue(all(a['failure_kind'] == 'invalid_strategy' for a in runner.attempts))
+
+    def test_provider_can_change_and_only_readable_work_is_sent_back(self):
+        first = response('length', content='', details=[
+            {'type': 'reasoning.summary', 'summary': 'The branches share a convolution'},
+            {'type': 'reasoning.encrypted', 'data': 'provider-specific-opaque-block'}])
+        first['provider'] = 'Crusoe'
+        final = response()
+        final['provider'] = 'Relace'
+        with tempfile.TemporaryDirectory() as tmp:
+            runner, bodies, http = self.run_completion(tmp, [first, final])
+            with http:
+                runner(self.messages)
+            self.assertEqual(runner.metadata['provider'], 'Crusoe,Relace')
+            self.assertEqual(runner.metadata['provider_routing'], 'openrouter_auto')
+            self.assertTrue(all(b['provider'] == {'require_parameters': True} for b in bodies))
+            self.assertIn('The branches share a convolution', json.dumps(bodies[1]['messages']))
+            self.assertNotIn('provider-specific-opaque-block', json.dumps(bodies[1]))
+            self.assertTrue(all('provider_tag' not in a['limits'] for a in runner.attempts))
+
+    def test_checkpoint_uses_real_schema_validation_before_accepting_attempt(self):
+        import test_checkpoints as fixture
+        spec = importlib.util.spec_from_file_location('taso.strategy', ROOT/'TASO/python/taso/strategy.py')
+        strategy = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(strategy)
+        fake = types.ModuleType('taso')
+        fake.operator_attrs = {}
+        bad = policy()
+        bad['phases'][0]['rule_ids'] = ['unknown:999']
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(sys.modules, {'taso':fake,'taso.strategy':strategy}):
+            directory = Path(tmp)
+            from prepare_context import prepare_context
+            prepare_context(ROOT/'TASO',directory)
+            controller = checkpoint_strategy.CheckpointStrategist('deepseek/deepseek-v4-pro', self.cfg,
+                directory/'static_context.json', 'builder', directory)
+            pending = iter([response(content=json.dumps(bad)), response(), response(), response(), response()])
+            bodies = []
+            def http(request, **kwargs):
+                bodies.append(json.loads(request.data))
+                return io.StringIO(json.dumps(next(pending)))
+            graph = fixture.Graph()
+            with patch.object(openrouter_client.urllib.request, 'urlopen', side_effect=http):
+                fixture.optimize_with_checkpoints(graph,controller,budget=100,checkpoint_interval=25)
+            self.assertEqual(graph.positions,[0,25,50,75])
+            self.assertEqual(controller.model_calls,5)
+            self.assertEqual(controller.records[0]['attempts'][0]['failure_kind'],'invalid_strategy')
+            self.assertEqual(controller.records[0]['strategy'],policy())
+            self.assertEqual(controller.aggregate()['strategy_retries'],1)
+            self.assertTrue(all(b['provider'] == {'require_parameters':True} for b in bodies))
 
     def test_paused_native_wrapper_and_exports_include_recovered_attempt(self):
         import test_checkpoints as fixture

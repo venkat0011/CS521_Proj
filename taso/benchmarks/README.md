@@ -55,7 +55,7 @@ selected models; it does not import old trials or guarantee the old default effo
 The default one-shot mode makes one strategy request per trial.
 The separate [checkpoint continuation preset](../llm_context/CONTINUATION.md)
 starts with model-specific maximum allowances and bounds follow-ups at three per
-checkpoint. It records all attempts and leaves the default configuration unchanged.
+checkpoint. It lets OpenRouter select providers, retries missing/invalid strategies within the same three-follow-up limit, records all attempts, and leaves the default configuration unchanged.
 [Online checkpoint mode](CHECKPOINTS.md) is enabled with `--checkpoint-interval`
 and supports intervals such as 25, 10 and 5 expansions. Checkpoint requests use
 the [compact representation](../llm_context/COMPACTION.md).

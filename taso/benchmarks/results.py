@@ -46,7 +46,7 @@ def flatten(report):
     row['api_finish_reason_counts'] = json.dumps(reasons, sort_keys=True)
     row['api_length_completions'] = reasons.get('length', 0) if reasons else None
     for key in ('completion_policy', 'max_retries', 'checkpoints_reached',
-                'continuation_requests', 'provider_retries', 'retry_wait_seconds',
+                'continuation_requests', 'provider_retries', 'strategy_retries', 'provider_routing', 'retry_wait_seconds',
                 'usage_observations', 'usage_missing_attempts'):
         row[key] = inference.get(key)
     decisions = (report.get('evaluation') or {}).get('checkpoint_decisions', report.get('checkpoint_decisions', []))
@@ -107,6 +107,7 @@ def model_call_rows(reports):
                        expansion=checkpoint.get('expansions'), checkpoint_status=checkpoint.get('status'),
                        attempt=call.get('attempt', 1), action=call.get('action', 'initial'),
                        replay_mode=call.get('replay_mode'), estimated_input_tokens=call.get('estimated_input_tokens'),
+                       retry_reason=call.get('retry_reason'), failure_kind=call.get('failure_kind'),
                        error=call.get('error'),
                        prompt_bytes=call.get('prompt_bytes', checkpoint.get('prompt_compaction', {}).get('messages_utf8_bytes')))
             for key in ('request_id', 'provider', 'returned_model', 'inference_seconds', 'max_tokens',

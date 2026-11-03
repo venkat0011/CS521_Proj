@@ -149,7 +149,8 @@ class CheckpointStrategist:
             save(self.out / 'inference_metadata.json', self.aggregate())
         if self.cfg.get('completion_policy') == 'continue_on_length':
             client = CheckpointCompletion(self.model, self.cfg, directory,
-                client_factory=self.client_factory, on_update=update_attempts)
+                client_factory=self.client_factory, on_update=update_attempts,
+                validator=lambda raw: validate_strategy(raw, catalog, chunk, 1, self.cfg['alpha']))
         else:
             client = self.client_factory(self.model, save_to=directory,
                 max_tokens=self.cfg['max_tokens'], temperature=self.cfg['temperature'],
@@ -159,7 +160,8 @@ class CheckpointStrategist:
         try:
             raw = client(messages)
             save(directory / 'response.json', {'raw_response': raw})
-            strategy = validate_strategy(raw, catalog, chunk, 1, self.cfg['alpha'])
+            strategy = (client.strategy if isinstance(client, CheckpointCompletion)
+                        else validate_strategy(raw, catalog, chunk, 1, self.cfg['alpha']))
             save(directory / 'strategy.json', strategy)
             record.update(status='completed', strategy=strategy)
             return strategy

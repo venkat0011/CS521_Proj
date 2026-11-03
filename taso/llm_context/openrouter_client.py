@@ -28,9 +28,15 @@ class ProviderFailure(RuntimeError):
         self.status, self.retry_after = status, retry_after
 
 
+class StrategyUnavailable(RuntimeError):
+    def __init__(self, message, response, reason='missing_strategy'):
+        super().__init__(message)
+        self.response, self.reason = response, reason
+
+
 class OpenRouterClient:
     def __init__(self, model=None, save_to=None, max_tokens=8192, temperature=0.2, timeout=240,
-                 reasoning_effort=None, reasoning_effort_overrides=None, provider_tag=None):
+                 reasoning_effort=None, reasoning_effort_overrides=None):
         self.model = model or os.environ.get('OPENROUTER_MODEL', DEFAULT_MODEL)
         self.save_to = Path(save_to) if save_to is not None else None
         self.max_tokens = normalize_max_tokens(max_tokens)
@@ -42,7 +48,7 @@ class OpenRouterClient:
         self.timeout = timeout
         self.metadata = None
         self.request_attempts = 0
-        self.provider_tag = provider_tag
+        self.last_response = None
 
     def __call__(self, messages):
         key = os.environ.get('OPENROUTER_API_KEY', '').strip()
@@ -53,8 +59,6 @@ class OpenRouterClient:
                 'response_format': {'type': 'json_object'},
                 'provider': {'require_parameters': True}}
         body.update(self.settings['parameters'])
-        if self.provider_tag:
-            body['provider'].update(only=[self.provider_tag], allow_fallbacks=False)
         if self.max_tokens is not None:
             body['max_tokens'] = self.max_tokens
         # Never persist authentication headers or the key.
@@ -83,6 +87,7 @@ class OpenRouterClient:
             raise ProviderFailure(f'OpenRouter HTTP {exc.code}: {detail[:2000]}', exc.code,
                                   exc.headers.get('Retry-After') if exc.headers else None) from None
         elapsed = time.perf_counter() - started
+        self.last_response = result
         choices = result.get('choices') or []
         choice = choices[0] if choices else {}
         usage = result.get('usage') or {}
@@ -97,7 +102,6 @@ class OpenRouterClient:
                          'output_token_limit_mode': limit_mode(self.max_tokens),
                          'finish_reason': choice.get('finish_reason'),
                          'native_finish_reason': choice.get('native_finish_reason'),
-                         'provider_tag': self.provider_tag,
                          'visible_completion_tokens': visible,
                          **{k: v for k, v in self.settings.items() if k != 'parameters'}}
         if self.save_to is not None:
@@ -110,7 +114,7 @@ class OpenRouterClient:
                 status = int(status)
             raise ProviderFailure(f'OpenRouter returned an error: {returned_error}', status)
         if not choices:
-            raise RuntimeError('OpenRouter returned no completion choices')
+            raise StrategyUnavailable('OpenRouter returned no completion choices', result)
         if choice.get('finish_reason') != 'stop':
             raise IncompleteCompletion(f'Incomplete completion ({choice.get("finish_reason")}); inspect api_response.json. '
                                f'Output limit mode: {limit_mode(self.max_tokens)}; '
@@ -119,5 +123,5 @@ class OpenRouterClient:
                                'when the application omits max_tokens; no automatic retry in this adapter.', result)
         content = choice.get('message', {}).get('content')
         if not isinstance(content, str) or not content.strip():
-            raise RuntimeError('No strategy text returned; inspect api_response.json and token usage.')
+            raise StrategyUnavailable('No strategy text returned; inspect api_response.json and token usage.', result)
         return content

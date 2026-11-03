@@ -35,7 +35,7 @@ def evaluate_checkpoint_trial(ts, build, cfg, args, report):
             'One final run_time observation per variant; this does not check numerical equivalence.',
         ])
     if cfg.get('completion_policy'):
-        report['notes'].append('Length continuations and transient-provider retries share the configured follow-up limit per checkpoint; all attempt usage is included.')
+        report['notes'].append('Length continuations, missing/invalid strategy retries and transient-provider retries share the configured follow-up limit per checkpoint; OpenRouter selects providers and all returned usage is included.')
     try:
         started = time.perf_counter()
         for name in order:

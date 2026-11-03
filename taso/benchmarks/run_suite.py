@@ -305,8 +305,9 @@ def main(argv=None):
                 cfg.get('reasoning_effort_overrides')) for model in cfg['models']}}
     if cfg.get('completion_policy'):
         from checkpoint_completion import CHECKED_ON, MODEL_LIMITS
-        plan['endpoint_limits_checked_on'] = CHECKED_ON
-        plan['endpoint_limits'] = {model: MODEL_LIMITS[model] for model in cfg['models']}
+        plan['model_limits_checked_on'] = CHECKED_ON
+        plan['model_limits'] = {model: MODEL_LIMITS[model] for model in cfg['models']}
+        plan['provider_routing'] = 'openrouter_auto'
     print(json.dumps(plan, indent=2), flush=True)
     if args.plan_only:
         return 0

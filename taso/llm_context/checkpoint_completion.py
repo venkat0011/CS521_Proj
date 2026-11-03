@@ -6,23 +6,22 @@ import json
 from pathlib import Path
 import time
 
-from openrouter_client import IncompleteCompletion, OpenRouterClient, ProviderFailure
+from openrouter_client import IncompleteCompletion, OpenRouterClient, ProviderFailure, StrategyUnavailable
 
-POLICY_VERSION = 'checkpoint_continuation_v1'
+POLICY_VERSION = 'checkpoint_continuation_v2'
 CHECKED_ON = '2026-11-03'
-# Provider-specific snapshot: /api/v1/models/<canonical_slug>/endpoints.
-# Pin the endpoint so a lower-limit fallback cannot silently replace it and
-# structured reasoning is replayed through the same provider. These are caps,
-# not promises that generation will use this many tokens or always finish.
+# Model-level limits, with no provider selection. DeepSeek's output cap is
+# corrected from an advertised 943718 to the backend-validated 393216 range
+# reported in the user's HTTP 400. OpenRouter chooses the serving provider.
 MODEL_LIMITS = {
-    'deepseek/deepseek-v4-pro': {'max_output': 943718, 'context': 1048576,
-        'max_input': None, 'provider_tag': 'gmicloud/fp8'},
+    'deepseek/deepseek-v4-pro': {'max_output': 393216, 'context': 1048576,
+        'max_input': None},
     'moonshotai/kimi-k3.1-pro': {'max_output': 943718, 'context': 1048576,
-        'max_input': None, 'provider_tag': 'moonshotai/mxfp4'},
+        'max_input': None},
     'openai/gpt-5.3-codex': {'max_output': 128000, 'context': 400000,
-        'max_input': 272000, 'provider_tag': 'openai'},
+        'max_input': 272000},
     'google/gemini-3.8-flash': {'max_output': 65536, 'context': 1048576,
-        'max_input': None, 'provider_tag': 'google-ai-studio'},
+        'max_input': None},
 }
 MARGIN = 4096
 MIN_OUTPUT = 1024
@@ -34,6 +33,9 @@ CONTINUE = (
     'object; do not return only a suffix, a code fence, or explanatory prose. '
     'Do not change the optimization objective or invent rule IDs.'
 )
+RETRY_STRATEGY = CONTINUE.replace(
+    'The previous response reached its output-token limit.',
+    'The previous response did not supply a complete valid strategy.')
 
 
 def save(path, value):
@@ -62,8 +64,8 @@ def output_cap(limits, requested, estimated_input):
     return cap
 
 
-def extend_history(messages, result, model):
-    """Preserve returned data; never claim to recover unreturned internal reasoning."""
+def extend_history(messages, result, model, reason='length'):
+    """Reuse readable work across automatic routing; save opaque data in artifacts."""
     choices = result.get('choices') or []
     original = choices[0].get('message', {}) if choices else {}
     if original.get('tool_calls'):
@@ -78,30 +80,21 @@ def extend_history(messages, result, model):
     if details is not None and (not isinstance(details, list) or any(not isinstance(d, dict) for d in details)):
         raise RuntimeError('Unsupported reasoning_details format')
     details = details or []
-    encrypted = any(d.get('type') == 'reasoning.encrypted' and d.get('data')
-                    and d.get('data') != '[REDACTED]' for d in details)
     readable = reasoning or '\n'.join(d.get('text') or d.get('summary') or '' for d in details)
-    usable_details = encrypted or any(d.get('text') or d.get('summary') for d in details)
-    if not content.strip() and not readable.strip() and not usable_details:
-        raise RuntimeError('Token limit reached but no reusable output/reasoning was returned; no blind retry')
     history = copy.deepcopy(messages)
-    assistant = {'role': 'assistant', 'content': content}
-    # Native DeepSeek ignores reasoning fields in ordinary non-tool turns.
-    # Reuse its returned readable work explicitly as user context instead.
-    if model.startswith('deepseek/') and readable and not encrypted:
-        if content:
-            history.append(assistant)
+    instruction = CONTINUE if reason == 'length' else RETRY_STRATEGY
+    if content:
+        history.append({'role': 'assistant', 'content': content})
+    # Do not replay provider-specific encrypted/signature blocks to an arbitrary
+    # next provider. All original blocks remain unchanged in api_response.json.
+    if readable:
         history.append({'role': 'user', 'content':
             'Unfinished work returned by your previous request (context for the same task):\n'
-            + readable + '\n\n' + CONTINUE})
+            + readable + '\n\n' + instruction})
         mode = 'returned_plaintext_as_context'
     else:
-        if details:
-            assistant['reasoning_details'] = copy.deepcopy(details)  # exact order, signatures and opaque blocks
-        elif reasoning:
-            assistant['reasoning'] = reasoning
-        history.extend([assistant, {'role': 'user', 'content': CONTINUE}])
-        mode = 'structured_reasoning_replay' if details else ('reasoning_field_replay' if reasoning else 'partial_answer_context')
+        history.append({'role': 'user', 'content': instruction})
+        mode = 'partial_answer_context' if content.strip() else 'no_readable_work_retry'
     return history, mode
 
 
@@ -136,16 +129,20 @@ def aggregate_attempts(attempts, model, requested, settings=None):
         'completion_policy': POLICY_VERSION,
         'continuation_requests': sum(a.get('action') == 'continue_after_length' for a in attempts if a.get('model_calls')),
         'provider_retries': sum(a.get('action') == 'retry_provider' for a in attempts if a.get('model_calls')),
+        'strategy_retries': sum(a.get('action') == 'retry_strategy' for a in attempts if a.get('model_calls')),
+        'provider_routing': 'openrouter_auto',
         'retry_wait_seconds': sum(a.get('retry_wait_seconds', 0) for a in attempts),
         'prompt_bytes_total': sum(a.get('prompt_bytes', 0) for a in attempts if a.get('model_calls')),
         **{k: v for k, v in (settings or {}).items() if k != 'parameters'}}
 
 
 class CheckpointCompletion:
-    def __init__(self, model, cfg, directory, client_factory=OpenRouterClient, on_update=None, sleep=time.sleep):
+    def __init__(self, model, cfg, directory, client_factory=OpenRouterClient, on_update=None, sleep=time.sleep, validator=None):
         self.model, self.cfg, self.directory = model, cfg, Path(directory)
         self.client_factory, self.on_update, self.sleep = client_factory, on_update, sleep
         self.attempts, self.settings = [], None
+        self.validator = validator or validate_json_object
+        self.strategy = None
         self.limits = MODEL_LIMITS[model]
         retries = cfg.get('max_retries', 3)
         if type(retries) is not int or not 0 <= retries <= 3:
@@ -171,7 +168,7 @@ class CheckpointCompletion:
         # UTF-8 serialized bytes plus margin are a deliberately conservative
         # initial estimate for these text requests, not an exact token count.
         estimated = message_bytes(history)
-        action, replay = 'initial', None
+        action, replay, retry_reason = 'initial', None, None
         last_error = None
         for number in range(1, self.max_retries + 2):
             cap = output_cap(self.limits, self.cfg['max_tokens'], estimated)
@@ -180,28 +177,35 @@ class CheckpointCompletion:
             client = self.client_factory(self.model, save_to=directory, max_tokens=cap,
                 temperature=self.cfg['temperature'], reasoning_effort=self.cfg.get('reasoning_effort'),
                 reasoning_effort_overrides=self.cfg.get('reasoning_effort_overrides'),
-                timeout=self.cfg.get('request_timeout_seconds', 240), provider_tag=self.limits['provider_tag'])
+                timeout=self.cfg.get('request_timeout_seconds', 240))
             self.settings = getattr(client, 'settings', None)
             record = {'attempt': number, 'action': action, 'status': 'started', 'model_calls': 1,
                 'prompt_bytes': message_bytes(history), 'estimated_input_tokens': estimated,
                 'context_guard': 'conservative_estimate_not_tokenizer', 'max_tokens': cap,
-                'provider_tag': self.limits['provider_tag'], 'limits_checked_on': CHECKED_ON,
-                'limits': self.limits, 'replay_mode': replay}
+                'provider_routing': 'openrouter_auto', 'limits_checked_on': CHECKED_ON,
+                'limits': self.limits, 'replay_mode': replay, 'retry_reason': retry_reason}
             self.attempts.append(record)
             self.persist()  # intent is durable before contacting the provider
             print(f'  [attempt {number}/{self.max_retries+1}] {action}; output cap={cap}; '
-                  f'provider={self.limits["provider_tag"]}', flush=True)
+                  'routing=OpenRouter automatic', flush=True)
             started = time.perf_counter()
             result, error = None, None
             try:
                 text = client(history)
+                try:
+                    self.strategy = self.validator(text)
+                except ValueError as exc:
+                    raise StrategyUnavailable(f'Invalid strategy: {exc}',
+                        getattr(client, 'last_response', None) or {}, 'invalid_strategy') from exc
                 record['status'] = 'completed'
                 return text
-            except (IncompleteCompletion, ProviderFailure) as exc:
+            except (IncompleteCompletion, ProviderFailure, StrategyUnavailable) as exc:
                 error = last_error = exc
                 record.update(status='failed', error=f'{type(exc).__name__}: {exc}')
-                if isinstance(exc, IncompleteCompletion):
+                if isinstance(exc, (IncompleteCompletion, StrategyUnavailable)):
                     result = exc.response
+                record['failure_kind'] = (exc.finish_reason if isinstance(exc, IncompleteCompletion)
+                    else exc.reason if isinstance(exc, StrategyUnavailable) else 'provider_error')
             except Exception as exc:
                 record.update(status='failed', error=f'{type(exc).__name__}: {exc}')
                 raise
@@ -211,20 +215,26 @@ class CheckpointCompletion:
                 self.persist()
             if number == self.max_retries + 1:
                 break
-            if isinstance(error, IncompleteCompletion) and error.finish_reason == 'length':
-                next_history, replay = extend_history(history, result, self.model)
+            if ((isinstance(error, IncompleteCompletion) and error.finish_reason == 'length')
+                    or isinstance(error, StrategyUnavailable)):
+                retry_reason = error.finish_reason if isinstance(error, IncompleteCompletion) else error.reason
+                next_history, replay = extend_history(history, result, self.model, retry_reason)
                 usage = (client.metadata or {}).get('usage') or {}
                 prompt, output = usage.get('prompt_tokens'), usage.get('completion_tokens')
-                if type(prompt) is not int or type(output) is not int or min(prompt, output) < 0:
-                    raise RuntimeError('Cannot guard continuation context without returned token usage') from error
                 # Count reported generated tokens conservatively, even if some
                 # hidden tokens were not returned. Extra metadata/turn overhead
                 # is guarded separately; no source/rule/history is dropped.
                 extra = len(CONTINUE.encode()) + 512
                 if replay == 'returned_plaintext_as_context':
                     extra += 256
-                estimated = max(estimated, prompt) + output + extra
-                history, action = next_history, 'continue_after_length'
+                if replay == 'no_readable_work_retry':
+                    estimated += message_bytes(next_history[len(history):])
+                elif type(prompt) is int and type(output) is int and min(prompt, output) >= 0:
+                    estimated = max(estimated, prompt) + output + extra
+                else:
+                    estimated = max(estimated, message_bytes(next_history))
+                history = next_history
+                action = 'continue_after_length' if retry_reason == 'length' and replay != 'no_readable_work_retry' else 'retry_strategy'
                 continue
             if isinstance(error, ProviderFailure) and error.status in (429, 500, 502, 503, 504):
                 delay = min(2 ** number, 30)
@@ -245,7 +255,15 @@ class CheckpointCompletion:
                     record['retry_wait_seconds'] = time.perf_counter() - waiting
                     self.persist()
                 action = 'retry_provider'
+                retry_reason = 'provider_error'
                 continue
             raise error
         raise RuntimeError(f'Checkpoint failed after {self.request_attempts} API attempts '
                            f'(at most {self.max_retries} follow-ups): {last_error}') from last_error
+
+
+def validate_json_object(text):
+    value = json.loads(text)
+    if not isinstance(value, dict) or not value:
+        raise ValueError('Expected a nonempty strategy JSON object')
+    return value
