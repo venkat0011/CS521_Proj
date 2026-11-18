@@ -593,14 +593,16 @@ impl CostModel {
                 assert!(_var_data.dtype == DataKind::Tnsr);
 
                 // Get arguments
+                // This project's TASO takes the tensors by reference, so pass the handles
+                let t_inpt = _inpt_data.meta;
+                let t_scale = _scale_data.meta;
+                let t_bias = _bias_data.meta;
+                let t_mean = _mean_data.meta;
+                let t_var = _var_data.meta;
                 let runtime = unsafe {
-                    let t_inpt = *_inpt_data.meta;
-                    let t_scale = *_scale_data.meta;
-                    let t_bias = *_bias_data.meta;
-                    let t_mean = *_mean_data.meta;
-                    let t_var = *_var_data.meta;
-                    // Get op
-                    let op = (*g.model).get_or_create_batchnorm(t_inpt, t_scale, t_bias, t_mean, t_var);
+                    // Get op. A negative epsilon selects cuDNN's minimum epsilon,
+                    // which Tensat's TASO fork hard-codes.
+                    let op = (*g.model).get_or_create_batchnorm(t_inpt, t_scale, t_bias, t_mean, t_var, -1.0);
                     assert!(op != Op_INVALID_OP);
                     (*op.ptr).runtime.clone()
                 };

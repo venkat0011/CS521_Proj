@@ -203,8 +203,10 @@ impl Analysis<Mdl> for TensorAnalysis {
                 let all_weights = x(input).all_weights && x(scale).all_weights && x(bias).all_weights && x(mean).all_weights && x(var).all_weights;
 
                 // Create tensorhandle and get metadata
+                // This project's TASO takes an epsilon. A negative value selects cuDNN's
+                // minimum epsilon, which Tensat's TASO fork hard-codes.
                 let res =
-                    unsafe { g.batchnorm(t_inpt, t_scale, t_bias, t_mean, t_var) };
+                    unsafe { g.batchnorm(t_inpt, t_scale, t_bias, t_mean, t_var, -1.0) };
                 Self::Data {
                     dtype: DataKind::Tnsr,
                     val: 0,

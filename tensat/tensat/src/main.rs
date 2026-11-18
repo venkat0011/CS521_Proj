@@ -27,8 +27,6 @@ use std::io::Error;
 use std::process::{Command, Stdio};
 use std::thread;
 
-use std::ffi::CString;
-
 fn main() {
     // Parse arguments
     let matches = App::new("Tamago")
@@ -192,6 +190,11 @@ fn main() {
                 .help("Run saturation only"),
         )
         .get_matches();
+
+    // Stop before the search starts, so a long run is not lost at the export step
+    if matches.is_present("export_model") {
+        exit_export_unsupported();
+    }
 
     let run_mode = matches.value_of("mode").unwrap();
     println!("Running mode is: {}", run_mode);
@@ -622,11 +625,19 @@ fn get_full_graph_runtime(runner: &Runner<Mdl, TensorAnalysis, ()>, process: boo
     }
 }
 
-fn save_model(runner: &Runner<Mdl, TensorAnalysis, ()>, file_name: &str) {
-    let mut g = runner.egraph.analysis.graph.borrow_mut();
-    unsafe {
-        (*g).export_to_file_raw(CString::new(file_name).unwrap().into_raw());
-    }
+/// Model export calls Graph::export_to_file_raw, which exists only in Tensat's TASO fork.
+fn exit_export_unsupported() -> ! {
+    eprintln!(
+        "Model export (-x / --export_model) is not supported: this build links the project's \
+         taso/TASO, which has no Graph::export_to_file_raw. Run again without that option."
+    );
+    std::process::exit(2);
+}
+
+/// Not reachable: main() rejects --export_model before any mode runs. Kept so the
+/// upstream call sites in optimize() stay unchanged.
+fn save_model(_runner: &Runner<Mdl, TensorAnalysis, ()>, _file_name: &str) {
+    exit_export_unsupported();
 }
 
 fn prove_taso_rules(matches: clap::ArgMatches) {
