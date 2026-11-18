@@ -15,7 +15,8 @@ It saves every trial, full search traces, distribution statistics and dot/box pl
 - `taso/experiments/`: manual-strategy and one-shot small-CNN smoke scripts.
 - `taso/benchmarks/`: paired one-shot/checkpoint experiment runners and configurations.
 - `taso/results/`: new experiment outputs, grouped by mode.
-- A separate Tensat folder will be added later.
+- `tensat/tensat/`, `tensat/egg/`: vendored Tensat and its egg fork, tracked as regular files.
+- `tensat/setup_and_run.py`: builds Tensat against `taso/TASO` and runs one optimisation.
 
 ## Start with vanilla TASO
 
@@ -39,6 +40,19 @@ After installation, the smoke test constructs Input -> Conv -> ReLU and records
 search output, graph costs, operator counts and execution timings. Internal
 profiling and LLM-controlled search are subsequent steps.
 
+## Vanilla Tensat
+
+In a Colab GPU terminal:
+
+```sh
+python3 tensat/setup_and_run.py
+```
+
+This builds the TASO runtime if needed, installs Rust and clang, builds Tensat
+and optimises SqueezeNet with greedy extraction. It has no checkpoint or LLM
+control yet. See [tensat/README.md](tensat/README.md) for options, what has
+been verified and the changes made to the Tensat source.
+
 ## Upstream attribution
 
 TASO: https://github.com/jiazhihao/TASO
@@ -47,6 +61,12 @@ Vendored from commit `f11782c4db180ad7d1e7ff7f4bb82e574ac3b6b8`.
 The original Apache 2.0 license is retained at `taso/TASO/LICENSE`.
 The upstream Git metadata is not part of this repository.
 
+Tensat: https://github.com/uwplse/tensat, vendored from commit
+`4fd1ad4a5082155e6bfb1685037f7d7fa07e5e0a` (MIT, `tensat/tensat/LICENSE`).
+
+egg fork used by Tensat: https://github.com/yycdavid/egg, vendored from commit
+`12cc1ee7731d37fe91901c81f59678fa1d08a2bb` (MIT, `tensat/egg/LICENSE`).
+
 ## Separate Python environments
 
 `python3 setup_env.py taso` creates `taso/.venv`; `python3 setup_env.py tensat`
@@ -54,9 +74,10 @@ creates `tensat/.venv`. Each folder has its own `.python-version`. Both start
 with Python 3.11.17; their versions can change independently. uv downloads
 the interpreter instead of relying on Colab's default version.
 
-The TASO runner creates its environment automatically. Tensat currently has
-only a Python scaffold, not an installed optimizer. Recreate environments on
-each machine rather than copying them. CUDA/compilers remain host dependencies.
+The TASO and Tensat runners create their environments automatically. Tensat's
+Python environment holds only the ILP solver; Tensat itself is Rust. Recreate
+environments on each machine rather than copying them. CUDA/compilers remain
+host dependencies.
 
 ## First manually scheduled search
 
