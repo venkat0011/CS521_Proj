@@ -25,6 +25,7 @@ venv/
 taso/llm_context/prepared/
 taso/baseline/results/
 taso/baseline/taso_baseline_source.zip
+tensat/results/
 **/runs/
 **/timer.txt
 .ipynb_checkpoints/
