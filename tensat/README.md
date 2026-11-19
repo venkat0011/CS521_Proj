@@ -35,7 +35,7 @@ Each stage name appears in `setup_status.json` if that stage fails.
 | `clang` | Installs clang 14 and libclang 14 with apt, if missing |
 | `rust_toolchain` | Installs rustup under `.tools/` and the Rust version in `tensat/rust-toolchain` |
 | `extractor_python` | Creates `tensat/.venv` and installs `tensat/requirements.txt` (ILP solver) |
-| `build_tensat` | `cargo build --release` in `tensat/tensat` |
+| `build_tensat` | `cargo build --release --locked` in `tensat/tensat` |
 | `run_tensat` | Runs one optimisation and copies its result line into `setup_status.json` |
 
 `taso/run_experiment.py` is not edited, because the TASO suite hashes it for each

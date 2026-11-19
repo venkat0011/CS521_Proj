@@ -127,9 +127,9 @@ def build_tensat(runner, cargo, native):
     runner.stage = 'build_tensat'
     runner.env.update(TASO_LIB_DIR=str(native / 'lib'), TASO_INCLUDE_DIR=str(native / 'include'),
                       LIBCLANG_PATH=str(LLVM / 'lib'), CLANG_PATH=str(LLVM / 'bin' / 'clang'))
-    # Versions come from Cargo.lock. --locked is not passed: upstream's lock file was
-    # stale (it named the package tamago), and cargo refuses to repair it under --locked.
-    runner.run([cargo, 'build', '--release'], cwd=TENSAT)
+    # --locked makes cargo fail instead of rewriting Cargo.lock, so every build uses the
+    # committed crate versions.
+    runner.run([cargo, 'build', '--release', '--locked'], cwd=TENSAT)
     return TENSAT / 'target' / 'release' / 'tensat'
 
 
