@@ -56,23 +56,30 @@ milliseconds; `saturation` and `extraction` are seconds; `nodes`, `classes` and
 
 ## Verified so far
 
-Environment of both runs (2026-11-18): Colab, Tesla T4, Ubuntu 24.04, CUDA
-toolkit 12.6, cuDNN 8.9.7.29, Rust 1.70.0, clang 14, ortools 9.8.3296.
+Environment of the SqueezeNet runs (2026-11-18): Colab, Tesla T4, Ubuntu 24.04,
+CUDA toolkit 12.6, cuDNN 8.9.7.29, Rust 1.70.0, clang 14, ortools 9.8.3296. The
+ResNeXt-50 run (2026-11-19) was a new Colab session on Ubuntu 24.04, set up by
+the same script.
 
 | Model | Extraction | Iterations (limit 3) | E-graph nodes / classes | Original (ms) | Optimized (ms) | Status |
 |---|---|---|---|---|---|---|
 | SqueezeNet | greedy | 3, limit reached | 1072 / 582 | 1.0998 | 1.0298 | Completed, one run |
 | SqueezeNet | ILP | 2, saturated | 288 / 199 | 1.0786 | 0.8450 | Completed, one run; solver reported an optimal solution in 0.22 s |
-| ResNeXt-50 | _TBD_ | _TBD_ | _TBD_ | _TBD_ | _TBD_ | _TBD_ |
-| Inception-v3 | _TBD_ | _TBD_ | _TBD_ | _TBD_ | _TBD_ | _TBD_ |
+| ResNeXt-50 | ILP | 3, limit reached | 307 / 255 | 4.8119 | 4.8766 | Completed, one run; no improvement (see below) |
+| Inception-v3 | Not run | | | | | |
 
-These are smoke-test numbers from single runs, not experiment results. The two
-SqueezeNet rows are not a like-for-like comparison of extraction methods: the
-ILP command also passes `--no_cycle`, as upstream does, which changes the
-e-graph that is built.
+These are smoke-test numbers from single runs, not experiment results.
 
-After both builds, `git status` showed `tensat/tensat/Cargo.lock` unchanged, so
-cargo used the pinned crate versions as they are.
+- The two SqueezeNet rows are not a like-for-like comparison of extraction
+  methods: the ILP command also passes `--no_cycle`, as upstream does, which
+  changes the e-graph that is built.
+- The ResNeXt-50 run did not make the graph faster: the optimized runtime is
+  1.3% above the original. The two SqueezeNet runs measured the same original
+  graph 2% apart, so this is within run-to-run variation. The search stopped at
+  the 3-iteration smoke limit; upstream uses 15.
+
+After the two SqueezeNet builds, `git status` showed `tensat/tensat/Cargo.lock`
+unchanged, so cargo used the pinned crate versions as they are.
 
 ## Source and changes
 
