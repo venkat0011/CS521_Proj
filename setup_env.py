@@ -3,7 +3,7 @@
 
 Run: python3 setup_env.py taso
 Python environments are recreated on each machine, not copied between hosts.
-Tensat's environment is a Python scaffold; its native dependencies are pending.
+Tensat's environment holds only its ILP solver; tensat/setup_and_run.py builds Tensat.
 """
 import argparse
 import os
@@ -61,7 +61,7 @@ def main():
     print(f'Python executable: {python}')
     print(f'Activate in a Linux/Colab terminal: source {python.parent / "activate"}')
     if args.project == 'tensat':
-        print('Python scaffold only; Tensat itself has not been cloned or installed.')
+        print('Python environment only. Build and run Tensat with: python3 tensat/setup_and_run.py')
 
 
 if __name__ == '__main__':
