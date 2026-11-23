@@ -207,6 +207,35 @@ cdef class PyGraph:
             raise RuntimeError('Search graph is no longer live')
         return self.p_graph.benchmark_runtime(blocks)
 
+    def benchmark_runtime_inputs(self, int blocks, int seed, float scale):
+        return self.p_graph.benchmark_runtime_inputs(blocks, seed, scale)
+
+    def audit_concat(self, int axis, inputs, flags):
+        cdef TensorHandle values[32]
+        cdef vector[int] copy_flags
+        if len(inputs) != len(flags) or not 1 <= len(inputs) <= 6:
+            raise ValueError('Invalid archived concat inputs')
+        copy_flags.resize(len(flags))
+        for i in range(len(inputs)):
+            values[i] = (<PyTensor>inputs[i]).ctensor
+            copy_flags[i] = int(flags[i])
+        cdef TensorHandle handle = self.p_graph.audit_concat(axis, len(inputs), values, copy_flags)
+        return PyTensor(ctypes.cast(<unsigned long long>handle, ctypes.c_void_p))
+
+    def audit_snapshot(self):
+        return self.p_graph.audit_snapshot_json().decode('utf-8')
+
+    def audit_clone(self):
+        cdef Graph* clone = self.p_graph.audit_clone()
+        return PyGraph(ctypes.cast(<unsigned long long>clone, ctypes.c_void_p))
+
+    def audit_preprocess(self):
+        cdef Graph* processed = self.p_graph.preprocess_weights()
+        return PyGraph(ctypes.cast(<unsigned long long>processed, ctypes.c_void_p))
+
+    def audit_outputs(self, int seed=1, float scale=1e-30):
+        return self.p_graph.audit_outputs(seed, scale)
+
     def cost(self):
         return self.p_graph.total_cost()
 

@@ -22,11 +22,11 @@ RECENT_POLICIES = 4
 # The short contract below was checked against these actual implementation bodies.
 # Source changes require reviewing the contract, not silently summarizing new code.
 CONTRACT_HASHES = {
-    'Graph* Graph::optimize_search(': '14b093339dd7d9637f8b86c8a1a1b7b469269bb456049515ddcd80c0510f4269',
-    'void GraphXfer::run(': '172b9be4121ed1249d223c512b90102e8feb051804a32cc6e1a161155a65de9f',
+    'Graph* Graph::optimize_search(': '21fd39e5406c107fbb2d6503a650b12eaea31671ce1004a350410b6785bfa12d',
+    'void GraphXfer::run(': '93e8a7ea0c3160bd396c185e44e90239780efd15331b07346a998f1d8ead13e1',
     'bool GraphXfer::can_match(': '26ec7351fa841160b3dbcf67f6a579e23afa4dc5e8deb5f313abbf3dd52e2322',
 }
-HEADER_HASH = 'edafddd94d6ed3ca72eb82ea2341bf20bd8f73cf7e1d8426209d7e7ca7b6155b'
+HEADER_HASH = 'c96bc22a2a98aa4940c6543bcd63c75462bab8d1aa3a1c1470d0995a3b65afe5'
 SEARCH_CONTRACT = (
     'TASO orders a persistent priority queue of whole graphs by estimated cost. '
     'One expansion pops one graph and tries every enabled rule at every valid match. '

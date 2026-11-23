@@ -23,6 +23,8 @@
 #include <sstream>
 #include <stdexcept>
 #include "taso/search_schedule.h"
+#include "taso/candidate_audit.h"
+#include "taso/candidate_snapshot.h"
 using namespace std;
 using namespace taso;
 
@@ -371,6 +373,19 @@ Graph::Graph()
   //printf("Initialize a graph\n");
 }
 
+TensorHandle Graph::audit_concat(int axis, int n, const TensorHandle* inputs,
+    const std::vector<int>& flags)
+{
+  if (n < 1 || n > MAX_NUM_INPUTS || flags.size() != size_t(n))
+    throw std::runtime_error("Invalid archived concat inputs");
+  Tensor tensors[MAX_NUM_INPUTS]; bool needCopy[MAX_NUM_INPUTS];
+  for(int k=0;k<n;k++){tensors[k]=*inputs[k];needCopy[k]=flags[k]!=0;}
+  Op op=model->get_or_create_concat(axis,n,tensors,needCopy);
+  if(op==Op::INVALID_OP)throw std::runtime_error("Archived concat is invalid");
+  for(int k=0;k<n;k++)add_edge(inputs[k]->op,op,inputs[k]->idx,k);
+  TensorHandle tensor=new Tensor(op.ptr->outputs[0]);tensor->op=op;return tensor;
+}
+
 void Graph::print_measurements(void)
 {
   model->print_cost = true;
@@ -488,6 +503,7 @@ Graph* Graph::optimize_search(float alpha, const std::vector<int>& phase_budgets
     const std::string& trace_file, CheckpointCallback callback, void* context)
 {
   SearchSchedule schedule(phase_budgets, phase_rules);
+  CandidateAudit audit(trace_file);
   if (!std::isfinite(alpha) || alpha < 1.0f)
     throw std::invalid_argument("alpha must be finite and at least 1");
 
@@ -553,6 +569,7 @@ Graph* Graph::optimize_search(float alpha, const std::vector<int>& phase_budgets
   std::vector<int> expanded(phase_budgets.size(), 0);
   std::priority_queue<Graph*, std::vector<Graph*>, GraphCompare> candidates;
   std::set<size_t> hashmap;
+  audit.capture("initial", this);
   candidates.push(this);
   hashmap.insert(hash());
   Graph* bestGraph = this;
@@ -586,6 +603,8 @@ Graph* Graph::optimize_search(float alpha, const std::vector<int>& phase_budgets
       // removing it or changing graph ownership/ordering at the checkpoint.
       Graph* snapshot = candidates.top()->total_cost() < bestCost
           ? candidates.top() : bestGraph;
+      audit.expansion = schedule.total() - 1; audit.phase = phase; audit.rule = -1;
+      audit.capture("checkpoint", snapshot);
       std::ostringstream progress;
       write_search_trace(progress, xfers.size(), phase_budgets, stats, expanded,
           initialCost, snapshot->total_cost(), schedule.total() - 1,
@@ -602,6 +621,8 @@ Graph* Graph::optimize_search(float alpha, const std::vector<int>& phase_budgets
       previous_phase = phase;
     }
     Graph* subGraph = candidates.top();
+    audit.expansion = schedule.total() - 1; audit.phase = phase; audit.rule = -1;
+    audit.ref("expanded", subGraph);
     candidates.pop();
     if (subGraph->total_cost() < bestCost) {
       delete bestGraph;
@@ -616,6 +637,7 @@ Graph* Graph::optimize_search(float alpha, const std::vector<int>& phase_budgets
     const size_t count = selected.empty() ? xfers.size() : selected.size();
     for (size_t j = 0; j < count; ++j) {
       const size_t id = selected.empty() ? j : selected[j];
+      audit.rule = id;
       if (profiling) ++stats[phase][id].attempts;
       const auto start = std::chrono::steady_clock::now();
       xfers[id]->run(0, subGraph, candidates, hashmap, bestCost * alpha,
@@ -630,6 +652,8 @@ Graph* Graph::optimize_search(float alpha, const std::vector<int>& phase_budgets
     bestGraph = candidates.top();
     bestCost = bestGraph->total_cost();
   }
+  audit.expansion = schedule.total(); audit.rule = -1;
+  audit.capture("returned_search", bestGraph);
   if (trace.is_open())
     write_search_trace(trace, xfers.size(), phase_budgets, stats, expanded,
         initialCost, bestCost, schedule.total(), candidates.size(),
@@ -642,6 +666,7 @@ Graph* Graph::optimize_search(float alpha, const std::vector<int>& phase_budgets
   Graph* processed = bestGraph->preprocess_weights();
   delete bestGraph;
   bestGraph = processed;
+  audit.capture("returned_execution", bestGraph);
   printf("        ===== Finish Cost-Based Backtracking Search =====\n\n");
   //printf("bestCost = %.4lf\n", bestGraph->total_cost());
   //printf("Optimized graph: end-to-end execution time =\n");
@@ -1329,7 +1354,26 @@ std::vector<float> Graph::benchmark_runtime(int blocks)
   return samples;
 }
 
-float Graph::run_runtime(bool for_feedback, int blocks, std::vector<float>* samples)
+std::vector<float> Graph::benchmark_runtime_inputs(int blocks, int seed, float scale)
+{
+  if (blocks < 4 || blocks > 200 || seed <= 0 || !std::isfinite(scale) || scale <= 0)
+    throw std::runtime_error("Invalid benchmark inputs");
+  Graph snapshot(*this);
+  std::vector<float> samples;
+  snapshot.run_runtime(true, blocks, &samples, nullptr, seed, scale);
+  return samples;
+}
+
+std::vector<float> Graph::audit_outputs(int seed, float scale)
+{
+  if (!std::isfinite(scale) || scale <= 0) throw std::runtime_error("Invalid audit input scale");
+  Graph snapshot(*this);
+  std::vector<float> outputs;
+  snapshot.run_runtime(true, 0, nullptr, &outputs, seed, scale);
+  return outputs;
+}
+
+float Graph::run_runtime(bool for_feedback, int blocks, std::vector<float>* samples, std::vector<float>* output_values, int input_seed, float input_scale)
 {
   std::map<Op, int, OpCompare> todos;
   std::map<Op, std::set<Edge, EdgeCompare>, OpCompare>::const_iterator it;
@@ -1389,8 +1433,16 @@ float Graph::run_runtime(bool for_feedback, int blocks, std::vector<float>* samp
         // Existing experiment paths retain their historical behavior.
         std::vector<DATATYPE> fixed_input;
         if (samples != nullptr) fixed_input.assign(size / sizeof(DATATYPE), DATATYPE(0.125));
+        if (output_values != nullptr || (samples != nullptr && input_seed != 0)) {
+          fixed_input.resize(size / sizeof(DATATYPE));
+          unsigned int state = static_cast<unsigned int>(input_seed) + 1;
+          for (size_t k = 0; k < fixed_input.size(); ++k) {
+            state = 1664525u * state + 1013904223u;
+            fixed_input[k] = input_scale * (float(state >> 8) / float(1u << 24) - 0.5f);
+          }
+        }
         t.data_ptr = (DATATYPE*) model->allocate_memory(size,
-            samples != nullptr ? fixed_input.data() : nullptr);
+            (samples != nullptr || output_values != nullptr) ? fixed_input.data() : nullptr);
         if (for_feedback) inputAllocations.push_back(t.data_ptr);
       } else {
         assert(t.data_ptr != NULL);
@@ -1643,6 +1695,26 @@ float Graph::run_runtime(bool for_feedback, int blocks, std::vector<float>* samp
   assert(opList.size() == inEdges.size());
   assert(opList.size() == opBaseList.size());
 
+  if (output_values != nullptr) {
+    for (OpBase* runtime : timedOps) runtime->forward(true);
+    int terminal_count = 0;
+    for (size_t k = 0; k < opList.size(); ++k) {
+      if (constantOnly.at(opList[k])) continue;
+      for (int port = 0; port < opBaseList[k]->numOutputs; ++port) {
+        bool consumed = false;
+        for (const Edge& edge : outEdges[opList[k]]) if (edge.srcIdx == port) consumed = true;
+        if (consumed) continue;
+        ++terminal_count;
+        Tensor& tensor = opBaseList[k]->outputs[port];
+        if (tensor.volume() > 1000000) throw std::runtime_error("Audit output is too large");
+        const size_t begin = output_values->size();
+        output_values->resize(begin + tensor.volume());
+        model->copy_memory(output_values->data() + begin, static_cast<const DATATYPE*>(tensor.data_ptr), tensor.volume() * sizeof(DATATYPE));
+      }
+    }
+    if (terminal_count != 1) throw std::runtime_error("Audit numeric validation requires exactly one model output");
+    return 0;
+  }
   if (samples != nullptr) {
 #ifdef USE_CUDNN
     *samples = model->measure_oplist_runtime_diagnostic(timedOps, blocks);

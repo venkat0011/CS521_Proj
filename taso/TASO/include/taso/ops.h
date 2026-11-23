@@ -492,6 +492,13 @@ public:
 class Graph {
 public:
   Graph();
+  size_t audit_id = 0;
+  std::string audit_node_json(Op op, bool weights);
+  std::string audit_snapshot_json();
+  void audit_write_record(std::ostream& out, std::set<size_t>& nodes);
+  Graph* audit_clone() { return new Graph(*this); }
+  TensorHandle audit_concat(int axis, int n, const TensorHandle* inputs, const std::vector<int>& flags);
+  std::vector<float> audit_outputs(int seed, float scale);
   TensorHandle new_input(int dim, const int* dims);
   TensorHandle new_weight(int dim, const int* dims, const DATATYPE* data);
   TensorHandle new_weight(const Tensor& input);
@@ -678,7 +685,8 @@ public:
   float run();
   float run_time_for_feedback();
   std::vector<float> benchmark_runtime(int blocks);
-  float run_runtime(bool for_feedback, int blocks = 0, std::vector<float>* samples = nullptr);
+  std::vector<float> benchmark_runtime_inputs(int blocks, int seed, float scale);
+  float run_runtime(bool for_feedback, int blocks = 0, std::vector<float>* samples = nullptr, std::vector<float>* outputs = nullptr, int input_seed = 0, float input_scale = 1.0f);
   void print_costs(void);
   void print_measurements(void);
 #ifdef TRT

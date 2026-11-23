@@ -32,6 +32,8 @@ struct RewriteStats {
 class Graph {
 public:
  static int live;
+ size_t audit_id=0;
+ void audit_write_record(ostream& out,set<size_t>&) {out<<"{\"event\":\"graph\",\"id\":"<<audit_id<<",\"nodes\":[],\"edges\":[],\"estimated_ms\":"<<cost<<"}\n";}
  Model* model = NULL;
  int id;
  float cost;
@@ -88,3 +90,4 @@ int GraphXfer::next_id=0;
 bool GraphXfer::chain=false;
 }
 using namespace taso;
+#include "taso/candidate_audit.h"

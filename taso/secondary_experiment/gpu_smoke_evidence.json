@@ -1,0 +1,406 @@
+{
+  "scope": "Completed timing-only smoke; retained, not treated as resolved",
+  "source_summary_sha256": "fd58bd6c7094905bc0cb4771d1ccd2ea5562f63e05fd179bdbad703c469cf4b7",
+  "model_calls": 0,
+  "files": [
+    {
+      "download_name": "timing_samples.csv",
+      "sha256": "3482b06360c14b7067a0ea447bf1d3c3823e0a0d5ae3311c82586178b96f791f",
+      "variant": "checkpoint",
+      "attempt": 1,
+      "samples": 40,
+      "gpu_medians_ms": [
+        0.9227624237537384,
+        0.928822249174118
+      ]
+    },
+    {
+      "download_name": "timing_samples-2.csv",
+      "sha256": "9ef69930ad30653f2e70c489cbdd20844dacf44f5e57edf6f3c1e32290ea36ca",
+      "variant": "checkpoint",
+      "attempt": 2,
+      "samples": 40,
+      "gpu_medians_ms": [
+        0.9887413084506989,
+        0.9922014474868774
+      ]
+    },
+    {
+      "download_name": "timing_samples-3.csv",
+      "sha256": "cd7cb18ad4d7477590be596aaef1c1ec78c3d3e75051c9d75307bab7d279fe88",
+      "variant": "checkpoint",
+      "attempt": 3,
+      "samples": 40,
+      "gpu_medians_ms": [
+        0.9167878329753876,
+        0.9290623962879181
+      ]
+    },
+    {
+      "download_name": "timing_samples-4.csv",
+      "sha256": "b7ad239c67a31acbfb0d28c0c93a69e66c01164ae224c5a45fcc98a82855a599",
+      "variant": "baseline",
+      "attempt": 1,
+      "samples": 40,
+      "gpu_medians_ms": [
+        0.9418470561504364,
+        0.8658443093299866
+      ]
+    },
+    {
+      "download_name": "timing_samples-5.csv",
+      "sha256": "0efd48a09f5a03a81f79edb721ff4d12f1d4ebb25f91d75be00242086fde2d37",
+      "variant": "baseline",
+      "attempt": 2,
+      "samples": 40,
+      "gpu_medians_ms": [
+        0.8343454897403717,
+        0.8452955186367035
+      ]
+    },
+    {
+      "download_name": "timing_samples-6.csv",
+      "sha256": "36edea6cfbcaeb96237e3c1c7ba2916904ee9e34a58815e7451d265ddf446384",
+      "variant": "baseline",
+      "attempt": 3,
+      "samples": 40,
+      "gpu_medians_ms": [
+        0.91675665974617,
+        0.922492653131485
+      ]
+    }
+  ],
+  "mapping_summaries": [
+    {
+      "variant": "baseline",
+      "attempt": 1,
+      "mapping": 1,
+      "gpu": {
+        "n": 20,
+        "median_ms": 0.9418470561504364,
+        "min_ms": 0.8365929126739502,
+        "max_ms": 1.3488534688949585,
+        "range_pct": 54.388932138806574,
+        "cv_pct": 18.273663467181752,
+        "drift_pct": -28.95992133571559
+      },
+      "host_wall": {
+        "n": 20,
+        "median_ms": 0.9419487416744232,
+        "min_ms": 0.8367483615875244,
+        "max_ms": 1.3489775657653809,
+        "range_pct": 54.37973230552966,
+        "cv_pct": 18.271094701332878,
+        "drift_pct": -28.95292124475517
+      },
+      "flags": [
+        "wide_sample_range",
+        "within_mapping_drift"
+      ],
+      "telemetry_before": "2026/11/23 14:50:08.161, Tesla T4, GPU-4bcd38f9-4a7c-28fc-1875-e45e6943f8fd, 42, P0, 585 MHz, 5000 MHz, 0 %, 6823 MiB, 25.67 W",
+      "telemetry_after": "2026/11/23 14:50:12.534, Tesla T4, GPU-4bcd38f9-4a7c-28fc-1875-e45e6943f8fd, 46, P0, 1590 MHz, 5000 MHz, 63 %, 6823 MiB, 71.57 W"
+    },
+    {
+      "variant": "baseline",
+      "attempt": 1,
+      "mapping": 2,
+      "gpu": {
+        "n": 20,
+        "median_ms": 0.8658443093299866,
+        "min_ms": 0.8388607501983643,
+        "max_ms": 0.9998732805252075,
+        "range_pct": 18.59601415541312,
+        "cv_pct": 4.827047339645166,
+        "drift_pct": -1.301645551550279
+      },
+      "host_wall": {
+        "n": 20,
+        "median_ms": 0.8659623563289642,
+        "min_ms": 0.8389794826507568,
+        "max_ms": 1.0000754594802856,
+        "range_pct": 18.603115441698392,
+        "cv_pct": 4.827678304841112,
+        "drift_pct": -1.2986204983076788
+      },
+      "flags": [
+        "wide_sample_range"
+      ],
+      "telemetry_before": "2026/11/23 14:50:12.581, Tesla T4, GPU-4bcd38f9-4a7c-28fc-1875-e45e6943f8fd, 46, P0, 1590 MHz, 5000 MHz, 63 %, 6823 MiB, 35.80 W",
+      "telemetry_after": "2026/11/23 14:50:16.143, Tesla T4, GPU-4bcd38f9-4a7c-28fc-1875-e45e6943f8fd, 48, P0, 1500 MHz, 5000 MHz, 73 %, 6823 MiB, 72.04 W"
+    },
+    {
+      "variant": "baseline",
+      "attempt": 2,
+      "mapping": 1,
+      "gpu": {
+        "n": 20,
+        "median_ms": 0.8343454897403717,
+        "min_ms": 0.8091442584991455,
+        "max_ms": 1.1644723415374756,
+        "range_pct": 42.58764353707954,
+        "cv_pct": 9.122867995608098,
+        "drift_pct": -0.3885056534348563
+      },
+      "host_wall": {
+        "n": 20,
+        "median_ms": 0.8345186114311218,
+        "min_ms": 0.80926913022995,
+        "max_ms": 1.1646885871887207,
+        "range_pct": 42.58975798625502,
+        "cv_pct": 9.122875879594584,
+        "drift_pct": -0.38923571979199156
+      },
+      "flags": [
+        "wide_sample_range"
+      ],
+      "telemetry_before": "2026/11/23 14:50:25.629, Tesla T4, GPU-4bcd38f9-4a7c-28fc-1875-e45e6943f8fd, 45, P0, 585 MHz, 5000 MHz, 0 %, 6821 MiB, 25.77 W",
+      "telemetry_after": "2026/11/23 14:50:29.163, Tesla T4, GPU-4bcd38f9-4a7c-28fc-1875-e45e6943f8fd, 49, P0, 1440 MHz, 5000 MHz, 99 %, 6821 MiB, 64.75 W"
+    },
+    {
+      "variant": "baseline",
+      "attempt": 2,
+      "mapping": 2,
+      "gpu": {
+        "n": 20,
+        "median_ms": 0.8452955186367035,
+        "min_ms": 0.8248729705810547,
+        "max_ms": 1.0236313343048096,
+        "range_pct": 23.513476570219286,
+        "cv_pct": 4.963852225659012,
+        "drift_pct": 0.9416659571432673
+      },
+      "host_wall": {
+        "n": 20,
+        "median_ms": 0.8454708158969879,
+        "min_ms": 0.8249953985214233,
+        "max_ms": 1.023776888847351,
+        "range_pct": 23.511336711845445,
+        "cv_pct": 4.96260013137833,
+        "drift_pct": 0.9401602391606811
+      },
+      "flags": [
+        "wide_sample_range"
+      ],
+      "telemetry_before": "2026/11/23 14:50:29.217, Tesla T4, GPU-4bcd38f9-4a7c-28fc-1875-e45e6943f8fd, 48, P0, 1560 MHz, 5000 MHz, 68 %, 6821 MiB, 64.75 W",
+      "telemetry_after": "2026/11/23 14:50:32.649, Tesla T4, GPU-4bcd38f9-4a7c-28fc-1875-e45e6943f8fd, 50, P0, 1485 MHz, 5000 MHz, 95 %, 6821 MiB, 65.53 W"
+    },
+    {
+      "variant": "baseline",
+      "attempt": 3,
+      "mapping": 1,
+      "gpu": {
+        "n": 20,
+        "median_ms": 0.91675665974617,
+        "min_ms": 0.9103785753250122,
+        "max_ms": 1.0690701007843018,
+        "range_pct": 17.31010337064012,
+        "cv_pct": 3.879860222037498,
+        "drift_pct": 0.3739902059390454
+      },
+      "host_wall": {
+        "n": 20,
+        "median_ms": 0.9169224798679352,
+        "min_ms": 0.9105629920959473,
+        "max_ms": 1.0692775249481201,
+        "range_pct": 17.30948213583253,
+        "cv_pct": 3.880370971394803,
+        "drift_pct": 0.3711943330937828
+      },
+      "flags": [
+        "wide_sample_range"
+      ],
+      "telemetry_before": "2026/11/23 14:50:40.217, Tesla T4, GPU-4bcd38f9-4a7c-28fc-1875-e45e6943f8fd, 48, P0, 585 MHz, 5000 MHz, 0 %, 6821 MiB, 26.16 W",
+      "telemetry_after": "2026/11/23 14:50:44.054, Tesla T4, GPU-4bcd38f9-4a7c-28fc-1875-e45e6943f8fd, 52, P0, 1470 MHz, 5000 MHz, 100 %, 6821 MiB, 69.30 W"
+    },
+    {
+      "variant": "baseline",
+      "attempt": 3,
+      "mapping": 2,
+      "gpu": {
+        "n": 20,
+        "median_ms": 0.922492653131485,
+        "min_ms": 0.9120591878890991,
+        "max_ms": 0.9590102434158325,
+        "range_pct": 5.089585848445923,
+        "cv_pct": 1.0044469045908633,
+        "drift_pct": 0.2426441593149864
+      },
+      "host_wall": {
+        "n": 20,
+        "median_ms": 0.9226627349853516,
+        "min_ms": 0.9122812151908875,
+        "max_ms": 0.9591391086578369,
+        "range_pct": 5.078550557012947,
+        "cv_pct": 1.0014948622696855,
+        "drift_pct": 0.2467379239372569
+      },
+      "flags": [],
+      "telemetry_before": "2026/11/23 14:50:44.104, Tesla T4, GPU-4bcd38f9-4a7c-28fc-1875-e45e6943f8fd, 52, P0, 1560 MHz, 5000 MHz, 74 %, 6821 MiB, 69.30 W",
+      "telemetry_after": "2026/11/23 14:50:47.822, Tesla T4, GPU-4bcd38f9-4a7c-28fc-1875-e45e6943f8fd, 54, P0, 1470 MHz, 5000 MHz, 100 %, 6821 MiB, 71.13 W"
+    },
+    {
+      "variant": "checkpoint",
+      "attempt": 1,
+      "mapping": 1,
+      "gpu": {
+        "n": 20,
+        "median_ms": 0.9227624237537384,
+        "min_ms": 0.9138175845146179,
+        "max_ms": 1.126290202140808,
+        "range_pct": 23.025711944561547,
+        "cv_pct": 5.013754008457227,
+        "drift_pct": 0.18202853642839134
+      },
+      "host_wall": {
+        "n": 20,
+        "median_ms": 0.9229546189308167,
+        "min_ms": 0.9140052795410156,
+        "max_ms": 1.1265045404434204,
+        "range_pct": 23.023803829983695,
+        "cv_pct": 5.01330106822222,
+        "drift_pct": 0.17684122403618385
+      },
+      "flags": [
+        "wide_sample_range"
+      ],
+      "telemetry_before": "2026/11/23 14:50:55.875, Tesla T4, GPU-4bcd38f9-4a7c-28fc-1875-e45e6943f8fd, 50, P0, 585 MHz, 5000 MHz, 0 %, 6821 MiB, 26.36 W",
+      "telemetry_after": "2026/11/23 14:50:59.747, Tesla T4, GPU-4bcd38f9-4a7c-28fc-1875-e45e6943f8fd, 54, P0, 1485 MHz, 5000 MHz, 90 %, 6821 MiB, 68.04 W"
+    },
+    {
+      "variant": "checkpoint",
+      "attempt": 1,
+      "mapping": 2,
+      "gpu": {
+        "n": 20,
+        "median_ms": 0.928822249174118,
+        "min_ms": 0.921726405620575,
+        "max_ms": 0.9974725842475891,
+        "range_pct": 8.155077970447573,
+        "cv_pct": 1.8856130266697497,
+        "drift_pct": 0.3340807466824858
+      },
+      "host_wall": {
+        "n": 20,
+        "median_ms": 0.9290486574172974,
+        "min_ms": 0.921885073184967,
+        "max_ms": 0.997639536857605,
+        "range_pct": 8.153982363338327,
+        "cv_pct": 1.8848890072297992,
+        "drift_pct": 0.3409366685877879
+      },
+      "flags": [],
+      "telemetry_before": "2026/11/23 14:50:59.795, Tesla T4, GPU-4bcd38f9-4a7c-28fc-1875-e45e6943f8fd, 54, P0, 1560 MHz, 5000 MHz, 90 %, 6821 MiB, 35.01 W",
+      "telemetry_after": "2026/11/23 14:51:03.607, Tesla T4, GPU-4bcd38f9-4a7c-28fc-1875-e45e6943f8fd, 55, P0, 1515 MHz, 5000 MHz, 88 %, 6821 MiB, 38.74 W"
+    },
+    {
+      "variant": "checkpoint",
+      "attempt": 2,
+      "mapping": 1,
+      "gpu": {
+        "n": 20,
+        "median_ms": 0.9887413084506989,
+        "min_ms": 0.9779226183891296,
+        "max_ms": 1.3428521156311035,
+        "range_pct": 36.90849104037107,
+        "cv_pct": 7.901672804496686,
+        "drift_pct": -0.28579331856106727
+      },
+      "host_wall": {
+        "n": 20,
+        "median_ms": 0.9889881610870361,
+        "min_ms": 0.978241503238678,
+        "max_ms": 1.343148946762085,
+        "range_pct": 36.89704870908897,
+        "cv_pct": 7.900899454640102,
+        "drift_pct": -0.28535850656542516
+      },
+      "flags": [
+        "wide_sample_range"
+      ],
+      "telemetry_before": "2026/11/23 14:51:10.497, Tesla T4, GPU-4bcd38f9-4a7c-28fc-1875-e45e6943f8fd, 52, P0, 585 MHz, 5000 MHz, 0 %, 6821 MiB, 26.57 W",
+      "telemetry_after": "2026/11/23 14:51:14.632, Tesla T4, GPU-4bcd38f9-4a7c-28fc-1875-e45e6943f8fd, 56, P0, 1350 MHz, 5000 MHz, 98 %, 6821 MiB, 35.11 W"
+    },
+    {
+      "variant": "checkpoint",
+      "attempt": 2,
+      "mapping": 2,
+      "gpu": {
+        "n": 20,
+        "median_ms": 0.9922014474868774,
+        "min_ms": 0.9801170825958252,
+        "max_ms": 1.2685935497283936,
+        "range_pct": 29.074384830141426,
+        "cv_pct": 6.184112615052825,
+        "drift_pct": 0.8412042165234945
+      },
+      "host_wall": {
+        "n": 20,
+        "median_ms": 0.9924720525741577,
+        "min_ms": 0.9803674221038818,
+        "max_ms": 1.268904209136963,
+        "range_pct": 29.072535219980065,
+        "cv_pct": 6.18382236521999,
+        "drift_pct": 0.8450396071206345
+      },
+      "flags": [
+        "wide_sample_range"
+      ],
+      "telemetry_before": "2026/11/23 14:51:14.760, Tesla T4, GPU-4bcd38f9-4a7c-28fc-1875-e45e6943f8fd, 55, P0, 1575 MHz, 5000 MHz, 98 %, 6821 MiB, 37.16 W",
+      "telemetry_after": "2026/11/23 14:51:18.808, Tesla T4, GPU-4bcd38f9-4a7c-28fc-1875-e45e6943f8fd, 57, P0, 1455 MHz, 5000 MHz, 88 %, 6821 MiB, 44.97 W"
+    },
+    {
+      "variant": "checkpoint",
+      "attempt": 3,
+      "mapping": 1,
+      "gpu": {
+        "n": 20,
+        "median_ms": 0.9167878329753876,
+        "min_ms": 0.9104428887367249,
+        "max_ms": 0.9460256099700928,
+        "range_pct": 3.881238379646252,
+        "cv_pct": 0.8883132995529918,
+        "drift_pct": 0.25351956220858174
+      },
+      "host_wall": {
+        "n": 20,
+        "median_ms": 0.9169915616512299,
+        "min_ms": 0.9106658101081848,
+        "max_ms": 0.9462546706199646,
+        "range_pct": 3.881045584290307,
+        "cv_pct": 0.8885145212101155,
+        "drift_pct": 0.2552329538280995
+      },
+      "flags": [],
+      "telemetry_before": "2026/11/23 14:51:26.475, Tesla T4, GPU-4bcd38f9-4a7c-28fc-1875-e45e6943f8fd, 55, P0, 585 MHz, 5000 MHz, 0 %, 6821 MiB, 26.97 W",
+      "telemetry_after": "2026/11/23 14:51:30.276, Tesla T4, GPU-4bcd38f9-4a7c-28fc-1875-e45e6943f8fd, 59, P0, 1335 MHz, 5000 MHz, 100 %, 6821 MiB, 69.36 W"
+    },
+    {
+      "variant": "checkpoint",
+      "attempt": 3,
+      "mapping": 2,
+      "gpu": {
+        "n": 20,
+        "median_ms": 0.9290623962879181,
+        "min_ms": 0.9138841032981873,
+        "max_ms": 1.1383193731307983,
+        "range_pct": 24.157179402518643,
+        "cv_pct": 5.831890915416838,
+        "drift_pct": 1.4156144295715656
+      },
+      "host_wall": {
+        "n": 20,
+        "median_ms": 0.9292575418949127,
+        "min_ms": 0.9140501618385315,
+        "max_ms": 1.138472080230713,
+        "range_pct": 24.150669569444364,
+        "cv_pct": 5.830887560991564,
+        "drift_pct": 1.4118442843641388
+      },
+      "flags": [
+        "wide_sample_range"
+      ],
+      "telemetry_before": "2026/11/23 14:51:30.335, Tesla T4, GPU-4bcd38f9-4a7c-28fc-1875-e45e6943f8fd, 58, P0, 1545 MHz, 5000 MHz, 84 %, 6821 MiB, 35.40 W",
+      "telemetry_after": "2026/11/23 14:51:34.189, Tesla T4, GPU-4bcd38f9-4a7c-28fc-1875-e45e6943f8fd, 60, P0, 1455 MHz, 5000 MHz, 99 %, 6821 MiB, 67.14 W"
+    }
+  ]
+}

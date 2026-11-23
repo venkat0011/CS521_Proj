@@ -14,6 +14,7 @@
  */
 
 #include "taso/substitution.h"
+#include "taso/candidate_audit.h"
 #ifdef NDEBUG
 #error "TASO matching requires assert side effects; compile the runtime with -UNDEBUG"
 #endif
@@ -1125,10 +1126,13 @@ void GraphXfer::run(int depth, Graph* graph,
     // Generate a new graph by applying xfer rule
     Graph* newGraph = create_new_graph(graph);
     if (stats) ++stats->generated;
+    CandidateAudit* audit = CandidateAudit::active();
+    if (audit) audit->capture("generated", newGraph, graph);
     // Check that the new graph should not have any loop
     if (newGraph->has_loop()) {
       //printf("Found a new graph with LOOP!!!!\n");
       if (stats) ++stats->cycle_rejections;
+      if (audit) audit->ref("cycle_rejected", newGraph, graph);
       delete newGraph;
       return;
     }
@@ -1136,16 +1140,20 @@ void GraphXfer::run(int depth, Graph* graph,
     assert(newGraph->check_correctness());
     if (!(newGraph->total_cost() < threshold)) {
       if (stats) ++stats->cost_rejections;
+      if (audit) audit->ref("cost_rejected", newGraph, graph);
       delete newGraph;
     } else if ((int)newGraph->inEdges.size() >= maxNumOps) {
       if (stats) ++stats->size_rejections;
+      if (audit) audit->ref("size_rejected", newGraph, graph);
       delete newGraph;
     } else if (!hashmap.insert(newGraph->hash()).second) {
       if (stats) ++stats->duplicates;
+      if (audit) audit->ref("duplicate", newGraph, graph);
       delete newGraph;
     } else {
       candidates.push(newGraph);
       if (stats) ++stats->admitted;
+      if (audit) audit->ref("admitted", newGraph, graph);
     }
   } else {
     OpX* srcOp = srcOps[depth];
