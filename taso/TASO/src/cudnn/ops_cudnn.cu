@@ -15,6 +15,7 @@
 
 #include "taso/ops.h"
 #include "taso/cuda_helper.h"
+#include <chrono>
 using namespace taso;
 
 Model::Model()
@@ -73,6 +74,33 @@ float Model::measure_oplist_runtime(const std::vector<OpBase*>& opBaseList)
   float milliseconds;
   cudaEventElapsedTime(&milliseconds, startEvent, endEvent);
   return milliseconds / num_runs;
+}
+
+// Diagnostic only: map once in Graph, then retain all buffers across blocks.
+// CPU wall time provides a second clock, not an independent GPU implementation.
+std::vector<float> Model::measure_oplist_runtime_diagnostic(
+    const std::vector<OpBase*>& ops, int blocks)
+{
+  const int warmup = 100, repeats = 100;
+  std::vector<float> samples;
+  for (int block = 0; block < blocks; ++block) {
+    for (int n = 0; n < warmup; ++n)
+      for (OpBase* op : ops) op->forward();
+    checkCUDA(cudaDeviceSynchronize());
+    const auto started = std::chrono::steady_clock::now();
+    checkCUDA(cudaEventRecord(startEvent));
+    for (int n = 0; n < repeats; ++n)
+      for (OpBase* op : ops) op->forward();
+    checkCUDA(cudaEventRecord(endEvent));
+    checkCUDA(cudaEventSynchronize(endEvent));
+    const auto finished = std::chrono::steady_clock::now();
+    float elapsed = 0;
+    checkCUDA(cudaEventElapsedTime(&elapsed, startEvent, endEvent));
+    const float wall = std::chrono::duration<float, std::milli>(finished - started).count();
+    samples.push_back(elapsed / repeats);
+    samples.push_back(wall / repeats);
+  }
+  return samples;
 }
 
 void* Model::allocate_memory(size_t size, const DATATYPE* data_initial)

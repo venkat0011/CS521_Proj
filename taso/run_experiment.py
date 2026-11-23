@@ -56,6 +56,9 @@ class Runner:
         self.run([python, root / 'taso/verify_bindings.py', '--repo', source,
                   '--out', self.results / 'bindings_check.json'], cwd=root / 'taso')
 
+    def experiment_command(self, root, args, python, results):
+        return experiment_command(root, args, python, results)
+
     def find_cuda12(self):
         candidates = []
         if self.env.get('CUDA_HOME'):
@@ -171,7 +174,7 @@ class Runner:
         self.run([environment / 'bin' / 'cmake', '--install', build])
         self.install_bindings(root, python, source)
         self.stage = args.experiment
-        command = experiment_command(root, args, python, self.results)
+        command = self.experiment_command(root, args, python, self.results)
         self.run(command, cwd=root / 'taso')
 
 

@@ -201,6 +201,12 @@ cdef class PyGraph:
             raise RuntimeError('Search graph is no longer live')
         return self.p_graph.run_time_for_feedback()
 
+    def benchmark_runtime(self, int blocks=20):
+        """Fixed mapped buffers, initialized input, alternating GPU/wall ms samples."""
+        if self.p_graph == NULL:
+            raise RuntimeError('Search graph is no longer live')
+        return self.p_graph.benchmark_runtime(blocks)
+
     def cost(self):
         return self.p_graph.total_cost()
 

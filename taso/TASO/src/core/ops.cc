@@ -1320,7 +1320,16 @@ float Graph::run_time_for_feedback(void)
   return snapshot.run_runtime(true);
 }
 
-float Graph::run_runtime(bool for_feedback)
+std::vector<float> Graph::benchmark_runtime(int blocks)
+{
+  if (blocks < 4 || blocks > 200) throw std::runtime_error("benchmark blocks must be 4..200");
+  Graph snapshot(*this);
+  std::vector<float> samples;
+  snapshot.run_runtime(true, blocks, &samples);
+  return samples;
+}
+
+float Graph::run_runtime(bool for_feedback, int blocks, std::vector<float>* samples)
 {
   std::map<Op, int, OpCompare> todos;
   std::map<Op, std::set<Edge, EdgeCompare>, OpCompare>::const_iterator it;
@@ -1376,7 +1385,12 @@ float Graph::run_runtime(bool for_feedback)
         size *= t.dim[j];
       if (op.ptr->type == OP_INPUT) {
         assert(t.data_ptr == NULL);
-        t.data_ptr = (DATATYPE*) model->allocate_memory(size);
+        // The diagnostic uses the same explicit finite input on every graph.
+        // Existing experiment paths retain their historical behavior.
+        std::vector<DATATYPE> fixed_input;
+        if (samples != nullptr) fixed_input.assign(size / sizeof(DATATYPE), DATATYPE(0.125));
+        t.data_ptr = (DATATYPE*) model->allocate_memory(size,
+            samples != nullptr ? fixed_input.data() : nullptr);
         if (for_feedback) inputAllocations.push_back(t.data_ptr);
       } else {
         assert(t.data_ptr != NULL);
@@ -1629,6 +1643,14 @@ float Graph::run_runtime(bool for_feedback)
   assert(opList.size() == inEdges.size());
   assert(opList.size() == opBaseList.size());
 
+  if (samples != nullptr) {
+#ifdef USE_CUDNN
+    *samples = model->measure_oplist_runtime_diagnostic(timedOps, blocks);
+    return samples->at(0);
+#else
+    throw std::runtime_error("GPU timing diagnostic requires the CUDA backend");
+#endif
+  }
   return model->measure_oplist_runtime(for_feedback ? timedOps : opBaseList);
 }
 

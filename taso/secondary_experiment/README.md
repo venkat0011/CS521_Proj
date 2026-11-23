@@ -1,0 +1,105 @@
+# Secondary experiment: GPU timing smoke test
+
+The separate `run_gpu_smoke.py` script handles setup and rebuilding;
+`gpu_timing_smoke.py` contains the diagnostic runner and isolated workers.
+Default local outputs go to `taso/results/secondary_experiment/gpu_timing_smoke`.
+
+This first follow-up checks timing repeatability on a fixed returned graph. It makes
+zero model/API calls. It does not yet test numerical correctness, exact candidate
+identity, or optimality. A larger search budget supplies a stronger reference,
+not a proof of a global optimum.
+
+## Run in Colab
+
+After pushing these changes and pulling them into the Colab checkout, run from
+`/content/CS521_Proj`:
+
+```bash
+python3 taso/secondary_experiment/run_gpu_smoke.py \
+  --out "/content/drive/MyDrive/CS521 Result/secondary_experiment/gpu_timing_smoke_v1"
+```
+
+The launcher sets up the environment and rebuilds the native library and Python
+binding. Defaults: SqueezeNet, budget 100, alpha 1.05, CP25, weight seed 521.
+Use a new output directory for a different configuration/source version. Running
+the same unchanged command resumes without repeating finished/failed attempts.
+
+The runner completes the baseline batch before starting the checkpoint batch.
+Each batch stops as soon as three executions succeed, with at most five attempts
+per batch. There is no alternating order and no concurrent GPU work. Workers have
+fresh processes and cost caches; these are independent groups, not paired searches.
+Failures, timeouts and interruptions remain recorded. If the baseline cannot get
+three successes in five attempts, checkpoint work does not start.
+
+**A noisy finite timing is a successful execution and is retained.** We do not
+keep retrying until three stable-looking results happen. With no failures there
+are three baseline workers and three checkpoint workers (three runs per variant).
+
+## What the checkpoint stage means
+
+By default it is a CP25 **all-rule control**, using the checkpoint interface but
+not Kimi. This tests the measurement machinery without buying decisions. It must
+not be reported as a Kimi performance result.
+
+To measure graphs produced by saved Kimi CP25 schedules, provide a directory
+containing that historical trial's `checkpoints.json`:
+
+```bash
+python3 taso/secondary_experiment/run_gpu_smoke.py \
+  --replay-trial "/content/drive/MyDrive/CS521 Result/checkpoint_25/trials/REPLACE_WITH_KIMI_SQUEEZENET_DIRECTORY/trial_01" \
+  --out "/content/drive/MyDrive/CS521 Result/secondary_experiment/gpu_timing_kimi_replay_v1"
+```
+
+The path above contains a placeholder: replace it with a real trial path. Repeat
+`--replay-trial` for multiple historical strategies. They are assigned in
+supplied order, cycling if necessary, with every assignment saved. No provider
+is contacted. Replaying a policy executes a new search and does not reconstruct
+the original graph or adapt its decisions to the new feedback. Policies must
+contain every required boundary and match budget 100/interval 25. Use fresh
+adaptive Kimi decisions only after this timing smoke has been assessed.
+
+## What each worker measures
+
+1. A discarded all-rule warm-up search, then a fresh measured search.
+2. The returned graph stays fixed throughout GPU measurement; no new search is
+   run between its timing samples.
+3. A snapshot is mapped once. Constant-only transformations run once outside the
+   inference timer. Runtime input tensors are initialized to the same finite
+   value, 0.125, rather than left uninitialized.
+4. Twenty blocks reuse those mapped execution operators/buffers. Every block
+   performs 100 warm-up executions, synchronizes, then times 100 executions.
+5. Each block records CUDA-event milliseconds per execution and synchronized
+   host-clock milliseconds per execution. Host time includes launch and event
+   overhead, so these clocks need not match exactly.
+6. The snapshot is released, the **same unchanged returned graph** is remapped,
+   and twenty more blocks are measured. This separates within-mapping variation
+   from remapping-associated changes. Cleanup occurs even on C++ exceptions.
+
+`--blocks 4` reduces the number of blocks; the default is 20. Measurements
+exclude mapping and constant preparation; complete measurement wall time is saved
+separately. GPU identity, clocks, utilization and temperature are sampled before
+and after each mapping where supported by nvidia-smi.
+
+## Read the results
+
+Open `report.txt` and `summary.json` in the output root. Each attempt also saves:
+
+- `timing_samples.csv`: every sample, in chronological mapping/block order.
+- `worker_result.json`: medians, ranges, coefficient of variation, first-half to
+  last-half median drift, remapping changes and available GPU telemetry.
+- `search_trace.json`, warm-up trace, graph structure snapshots and checkpoint
+  decisions for contextual inspection.
+- `worker.log`: native output and any error/traceback.
+
+A 10% relative range/drift threshold flags a diagnostic concern; it is not a
+statistical significance threshold and does not determine execution success.
+GPU-event time exceeding host time by over 5% is separately flagged for review.
+The two clocks time the same kernels, not independent implementations. Agreement
+and low variability are useful evidence, not proof of absolute timing accuracy.
+
+The structural JSON uses incomplete public getters and contains GUIDs. Its file
+checksum is **not a canonical graph fingerprint**, contains no weights and cannot
+prove graph equivalence. The next candidate-tracking experiment needs full graph
+identity/provenance and numerical validation. Avoid interpreting the smoke's
+across-group median differences as confirmed speedups: graph choices and GPU
+conditions can differ, and fixed baseline-first ordering still has time drift.

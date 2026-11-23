@@ -285,3 +285,4 @@ cdef extern from "taso/ops.h" namespace "taso":
         float total_cost()
         float run()
         float run_time_for_feedback() except +
+        vector[float] benchmark_runtime(int blocks) except +

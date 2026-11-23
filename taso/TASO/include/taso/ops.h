@@ -677,7 +677,8 @@ public:
   float total_cost(void);
   float run();
   float run_time_for_feedback();
-  float run_runtime(bool for_feedback);
+  std::vector<float> benchmark_runtime(int blocks);
+  float run_runtime(bool for_feedback, int blocks = 0, std::vector<float>* samples = nullptr);
   void print_costs(void);
   void print_measurements(void);
 #ifdef TRT
@@ -1467,6 +1468,7 @@ public:
   void release_memory(void* ptr);
   bool copy_memory(DATATYPE* dst, const DATATYPE* src, size_t size);
   float measure_oplist_runtime(const std::vector<OpBase*>& list);
+  std::vector<float> measure_oplist_runtime_diagnostic(const std::vector<OpBase*>& list, int blocks);
   bool broadcastable(const Tensor& t1, const Tensor& t2);
 public:
   bool isTraining;
