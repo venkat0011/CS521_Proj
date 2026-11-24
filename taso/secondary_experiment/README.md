@@ -1,7 +1,7 @@
 # Secondary experiment: GPU timing smoke test
 
-For the candidate identity, checkpoint and larger-budget study across
-SqueezeNet, ResNeXt-50 and Inception-v3 (Kimi CP25 only), see
+For the candidate identity, checkpoint and larger-budget study on
+SqueezeNet only (Kimi CP25, without GPU feedback), see
 [CANDIDATE_STUDY.md](CANDIDATE_STUDY.md). Completed timing observations are
 recorded in [GPU_SMOKE_FINDINGS.md](GPU_SMOKE_FINDINGS.md).
 

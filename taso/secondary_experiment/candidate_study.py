@@ -14,7 +14,7 @@ from worker import save
 
 def configuration(args):
     cfg=json.loads((HERE.parent/'benchmarks/checkpoint_continuation.json').read_text())
-    cfg.update(model='moonshotai/kimi-k3.1-pro',models=['moonshotai/kimi-k3.1-pro'],networks=list(getattr(args,'networks',['squeezenet','resnext50','inceptionv3'])),
+    cfg.update(model='moonshotai/kimi-k3.1-pro',models=['moonshotai/kimi-k3.1-pro'],networks=list(getattr(args,'networks',['squeezenet'])),
                budget=100,checkpoint_interval=25,gpu_feedback=False,reference_budget=args.reference_budget,
                reference_points=sorted({100,250,args.reference_budget}),blocks=args.blocks,
                weight_initialization=getattr(args,'weight_initialization','original'),input_seeds=[1,2,3],rtol=1e-3,atol=1e-6,required_successes=3,max_attempts=5)
@@ -105,7 +105,7 @@ def main(argv=None):
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--out',type=Path,required=True)
     p.add_argument('--reference-budget',type=int,default=500)
     p.add_argument('--weight-initialization',choices=['original','fan_in'],default='original')
-    p.add_argument('--networks',nargs='+',choices=['squeezenet','resnext50','inceptionv3'],default=['squeezenet','resnext50','inceptionv3']);
+    p.add_argument('--networks',nargs='+',choices=['squeezenet','resnext50','inceptionv3'],default=['squeezenet']);
     p.add_argument('--blocks',type=int,default=20);p.add_argument('--preflight-only',action='store_true')
     args=p.parse_args(argv)
     if len(set(args.networks))!=len(args.networks):p.error('Duplicate DNN names are not allowed')

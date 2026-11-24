@@ -1,7 +1,7 @@
 # Secondary experiment: Kimi CP25 candidate identity and quality
 
 Scope: one LLM (Kimi K3.1 Pro), one guided variant (live CP25, no GPU feedback),
-three DNNs (SqueezeNet, ResNeXt-50 and Inception-v3). The existing GPU smoke protocol is retained; its findings
+one DNN (SqueezeNet). ResNeXt-50 and Inception-v3 are outside the current study scope. The existing GPU smoke protocol is retained; its findings
 are recorded in `GPU_SMOKE_FINDINGS.md`.
 
 ## Run the zero-API preflight first
@@ -11,10 +11,11 @@ From `/content/CS521_Proj` after syncing these changes:
 ```bash
 python3 taso/secondary_experiment/run_candidate_study.py \
   --preflight-only \
-  --out "/content/drive/MyDrive/CS521 Result/secondary_experiment/candidate_study_3dnns_v1"
+  --networks squeezenet --weight-initialization fan_in \
+  --out "/content/drive/MyDrive/CS521 Result/secondary_experiment/candidate_study_squeezenet_cp25_v1"
 ```
 
-This rebuilds TASO, then runs the baseline reference batches for all three DNNs only. It checks full
+This rebuilds TASO, then runs the baseline reference batch for SqueezeNet only. It checks full
 candidate recording, saved graph restoration, finite output comparisons and GPU
 measurement before spending on Kimi. Send `summary.json` and any failed attempt's
 `worker.log` if the preflight fails. Baseline work is reused when continuing with
@@ -25,26 +26,26 @@ run the same command without `--preflight-only`:
 
 ```bash
 python3 taso/secondary_experiment/run_candidate_study.py \
-  --out "/content/drive/MyDrive/CS521 Result/secondary_experiment/candidate_study_3dnns_v1"
+  --networks squeezenet --weight-initialization fan_in \
+  --out "/content/drive/MyDrive/CS521 Result/secondary_experiment/candidate_study_squeezenet_cp25_v1"
 ```
 
 **This full run makes new paid Kimi calls.** A complete 100-expansion trial has
-four decisions at 0,25,50,75: normally 12 initial calls per DNN, or 36 across the
-nine successful guided trials for all three DNNs. Each decision retains the prior maximum of three follow-ups. At most five
-trial attempts are launched per DNN (at most 80 requests per DNN or 240 total in
-the worst case of all four attempts at all four decisions of all five trials). Failed and interrupted trials
+four decisions at 0,25,50,75: normally 12 initial calls across three successful SqueezeNet guided trials.
+Each decision retains the prior maximum of three follow-ups. At most five trial
+attempts are launched (at most 80 requests with every follow-up used at all four
+checkpoints of all five trials). Failed and interrupted trials
 are retained and are not silently repurchased on resume.
 
 ## Order and budgets
 
-- Complete all three DNN baseline batches first: three successes per DNN, with
-  at most five attempts per DNN. No Kimi calls start unless every baseline group
-  reaches its required success count.
+- Complete the SqueezeNet baseline batch first: three successes, with at most
+  five attempts. No Kimi calls start unless the baseline reaches its required success count.
 - Each reference searches to 500 expansions and retains estimated-best snapshots
   at 0,100,250,500. Prefix observations come from one continuous native search,
   not independent reruns. Queue, visited graphs and costs persist.
-- Then complete three live Kimi CP25 trials per DNN at budget 100, with at most
-  five attempts per DNN. Save the estimated-best graph at 0,25,50,75 and the returned graph.
+- Then complete three live Kimi CP25 trials for SqueezeNet at budget 100, with at most
+  five attempts. Save the estimated-best graph at 0,25,50,75 and the returned graph.
 - No measured GPU values or numerical validation results are sent to Kimi. All
   checkpoint diagnostic execution happens after search is finished.
 - A noisy result or a numerically disagreeing guided graph is retained; trials
@@ -146,7 +147,7 @@ If analysis was interrupted after searches completed, rerun without provider wor
 ```bash
 /content/CS521_Proj/taso/.venv/bin/python \
   taso/secondary_experiment/analyze_candidates.py \
-  "/content/drive/MyDrive/CS521 Result/secondary_experiment/candidate_study_3dnns_v1"
+  "/content/drive/MyDrive/CS521 Result/secondary_experiment/candidate_study_squeezenet_cp25_v1"
 ```
 
 ## Limits on conclusions
@@ -184,3 +185,9 @@ Numerical archive fidelity is now compared against the saved candidate's own out
 Use a new `candidate_study_3dnns_v3` output directory after committing/updating Colab. The runner rebuilds the native bindings. Keep `--preflight-only --weight-initialization fan_in` for the first run; no model calls are made. Local native regressions cannot substitute for verification on the actual GPU.
 
 The CUDA audit also found that `Conv2D::map()` allocated a bias buffer without initializing it, although every forward path adds it to the output. The buffer now starts at zero for these bias-free convolutions. The shared cost-measurement bias buffer is also zeroed before algorithm selection/timing. A regression executes the production mapping function against deliberately poisoned allocations and checks zero bias for fused and unfused paths. These fixes make future numerical checks meaningful; they do not retroactively establish correctness of historical outputs or GPU speedups.
+
+## Current scope: SqueezeNet only
+
+The user narrowed the secondary study to SqueezeNet on 24 November 2026, retaining one LLM (Kimi), CP25 without GPU feedback, and baseline budgets 100/250/500. Both entry points now default to SqueezeNet. Explicit multi-DNN options remain available, but larger networks are outside this study's scope. Earlier all-three-DNN notes below/above describe prior preflight work.
+
+The supplied `summary-2.json` reports three completed SqueezeNet baseline trials, all numerically valid, with exact restoration at 100/250/500 expansions and zero model calls. All SqueezeNet observation records still flag timing concerns; these data do not establish a reliable GPU speedup. Preserve the existing run folder. A network-list/source change requires a new output directory under the runner's provenance checks; do not overwrite or relabel the existing three-DNN config.

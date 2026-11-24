@@ -26,7 +26,7 @@ class CandidateRunner(Runner):
 def main(argv=None):
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--out',type=Path)
-    p.add_argument('--networks',nargs='+',choices=['squeezenet','resnext50','inceptionv3'],default=['squeezenet','resnext50','inceptionv3'])
+    p.add_argument('--networks',nargs='+',choices=['squeezenet','resnext50','inceptionv3'],default=['squeezenet'])
     p.add_argument('--weight-initialization',choices=['original','fan_in'],default='original',
                    help='Explicit workload choice; fan_in uses new seeded scaled weights in both TASO and Kimi')
     p.add_argument('--reference-budget',type=int,default=500)
@@ -37,7 +37,7 @@ def main(argv=None):
     if args.reference_budget<250 or args.reference_budget%25 or not 4<=args.blocks<=200:
         p.error('Reference budget: multiple of 25, at least 250; timing blocks: 4..200')
     args.experiment='baseline';root=HERE.parents[1]
-    results=(args.out or root/'taso/results/secondary_experiment/candidate_study_3dnns').resolve()
+    results=(args.out or root/'taso/results/secondary_experiment/candidate_study_squeezenet_cp25').resolve()
     results.mkdir(parents=True,exist_ok=True);runner=CandidateRunner(results)
     status=dict(status='started',experiment='secondary_candidate_study',started_utc=datetime.now(timezone.utc).isoformat())
     try:
