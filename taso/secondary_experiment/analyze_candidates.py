@@ -83,7 +83,8 @@ def compare_trial(kimi_dir, reference_dir, cfg):
     if reference and final:
         r=[x['gpu']['median_ms'] for x in reference['timing']]
         g=[x['gpu']['median_ms'] for x in final['timing']]
-        valid=final['numerically_valid'] and kr.get('reference_restoration',{}).get('exact_graph_restoration',False)
+        valid=(final['numerically_valid'] and kr.get('reference_restoration',{}).get('exact_graph_restoration',False)
+               and kr.get('restored_reference_timing',{}).get('numerically_valid',False))
         result['gpu_evidence']=dict(valid_for_comparison=valid,
             reference_backend_plan_preserved=kr['reference_restoration'].get('exact_backend_plan_restoration'),reference_medians_ms=r,guided_medians_ms=g,
             median_ratio=statistics.median(g)/statistics.median(r),

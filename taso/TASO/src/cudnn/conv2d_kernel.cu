@@ -67,6 +67,9 @@ void Conv2D::map(void)
   size_t outputSize = sizeof(DATATYPE) * n * c * h * w;
   size_t biasSize = sizeof(DATATYPE) * outputC;
   checkCUDA(cudaMalloc(&biasPtr, biasSize));
+  // Conv2D has no bias parameter. Both fused and unfused execution still use
+  // cuDNN's bias buffer, so it must contain zeros rather than allocator residue.
+  checkCUDA(cudaMemset(biasPtr, 0, biasSize));
   checkCUDA(cudaMalloc(&outputs[0].data_ptr, outputSize));
 }
 
@@ -118,6 +121,9 @@ void Model::measure_conv2d_cost(Conv2D* conv)
   int kernelH = conv->inputs[1].dim[2];
   int kernelW = conv->inputs[1].dim[3];
   int outputC = conv->outputs[0].dim[1];
+  // The shared measurement buffer represents the same bias-free operation.
+  // Initialize before algorithm selection and the timed region.
+  checkCUDA(cudaMemset(biasPtr, 0, sizeof(DATATYPE) * outputC));
   int outputH = conv->outputs[0].dim[2];
   int outputW = conv->outputs[0].dim[3];
   int groups = conv->inputs[0].dim[1] / conv->inputs[1].dim[1];

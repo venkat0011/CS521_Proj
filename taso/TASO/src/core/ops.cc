@@ -373,6 +373,121 @@ Graph::Graph()
   //printf("Initialize a graph\n");
 }
 
+// Import exact execution descriptors into private operators. Search/cache factories
+// derive metadata again and can return a shared operator whose descriptors were
+// updated by preprocess_weights/replace_node. An archive import must do neither.
+std::vector<TensorHandle> Graph::audit_operator(int kind,
+    const std::vector<TensorHandle>& sources, const std::vector<int>& attributes,
+    const std::vector<std::vector<int> >& input_metadata,
+    const std::vector<std::vector<int> >& output_metadata, int backend_algorithm)
+{
+  if(sources.empty() || sources.size()>MAX_NUM_INPUTS || input_metadata.size()!=sources.size() ||
+      output_metadata.empty() || output_metadata.size()>MAX_NUM_OUTPUTS)
+    throw std::runtime_error("Invalid archived operator port counts");
+  auto layout = [](const std::vector<int>& keys) {
+    Tensor t;size_t k=2,volume=1;
+    if(keys.size()<2 || keys[0]!=Tensor::MAGIC_NUMBER || keys[1]<1 || keys[1]>MAX_DIM)
+      throw std::runtime_error("Invalid archived operator tensor");
+    t.numDim=keys[1];
+    for(int d=0;d<t.numDim;d++) {
+      if(k>=keys.size() || keys[k]<=0)throw std::runtime_error("Invalid archived dimensions");
+      t.dim[d]=keys[k++];volume*=t.dim[d];
+      if(volume>size_t(512)*1024*1024/sizeof(DATATYPE))throw std::runtime_error("Archived tensor exceeds size limit");
+    }
+    for(int d=0;d<t.numDim;d++) {
+      if(k>=keys.size() || keys[k]<0)throw std::runtime_error("Invalid archived strides");
+      t.stride[d]=keys[k++];
+    }
+    for(int d=0;d<t.numDim;d++) {
+      if(k>=keys.size() || keys[k]<0 || keys[k]>MAX_NUM_SPLITS)throw std::runtime_error("Invalid archived splits");
+      t.split[d].num=keys[k++];
+      for(int j=0;j<t.split[d].num;j++) {
+        if(k>=keys.size())throw std::runtime_error("Truncated archived splits");
+        t.split[d].pos[j]=keys[k++];
+      }
+    }
+    if(k!=keys.size())throw std::runtime_error("Unexpected archived tensor metadata");
+    return t;
+  };
+  Tensor inputs[MAX_NUM_INPUTS];std::vector<Tensor> outputs;
+  for(size_t i=0;i<sources.size();i++) {
+    if(sources[i]==nullptr)throw std::runtime_error("Missing archived input port");
+    inputs[i]=layout(input_metadata[i]);inputs[i].op=sources[i]->op;inputs[i].idx=sources[i]->idx;
+    if(inputs[i].numDim!=sources[i]->numDim)throw std::runtime_error("Archived edge rank mismatch");
+    for(int d=0;d<inputs[i].numDim;d++)
+      if(inputs[i].dim[d]!=sources[i]->dim[d])throw std::runtime_error("Archived edge shape mismatch");
+  }
+  for(const auto& keys:output_metadata)outputs.push_back(layout(keys));
+  const auto& a=attributes;
+  auto require=[&](size_t n,size_t m) {
+    if(sources.size()!=n || a.size()!=m)throw std::runtime_error("Invalid archived operator attributes");
+  };
+  std::unique_ptr<OpBase> owned;
+  switch(kind) {
+    case OP_CONV2D:
+      require(2,4);
+      if(a[0]<=0 || a[1]<=0 || a[2]<0 || a[2]>1 || a[3]<0 || a[3]>3)
+        throw std::runtime_error("Invalid archived convolution attributes");
+      owned.reset(new Conv2D(model,inputs[0],inputs[1],a[0],a[1],PaddingMode(a[2]),ActiMode(a[3])));
+#ifdef USE_CUDNN
+      if(backend_algorithm<0 || backend_algorithm>7)throw std::runtime_error("Missing/invalid archived convolution algorithm");
+      static_cast<Conv2D*>(owned.get())->fwdAlgo=cudnnConvolutionFwdAlgo_t(backend_algorithm);
+#endif
+      break;
+    case OP_POOL2D_MAX:case OP_POOL2D_AVG:
+      require(2,6);
+      if(a[0]<=0 || a[1]<=0 || a[2]<=0 || a[3]<=0 || a[4]<0 || a[4]>1 || a[5]<0 || a[5]>3)
+        throw std::runtime_error("Invalid archived pooling attributes");
+      owned.reset(new Pool2D(model,inputs[0],inputs[1],OpType(kind),a[0],a[1],a[2],a[3],PaddingMode(a[4]),ActiMode(a[5])));break;
+    case OP_RELU:case OP_SIGMOID:case OP_TANH:
+      require(1,1);owned.reset(new Activation(model,inputs[0],OpType(kind),bool(a[0])));break;
+    case OP_DROPOUT:
+      require(1,0);owned.reset(new NoOp(model,inputs[0],OpType(kind)));break;
+    case OP_CONCAT: {
+      if(a.size()!=sources.size()+1 || a[0]<0 || a[0]>=inputs[0].numDim)
+        throw std::runtime_error("Invalid archived concat attributes");
+      bool flags[MAX_NUM_INPUTS];for(size_t i=0;i<sources.size();i++)flags[i]=bool(a[i+1]);
+      owned.reset(new Concat(model,a[0],sources.size(),inputs,flags));break;
+    }
+    case OP_SPLIT:
+      if(sources.size()!=1 || a.size()!=outputs.size()+1 || a[0]<0 || a[0]>=inputs[0].numDim)
+        throw std::runtime_error("Invalid archived split attributes");
+      owned.reset(new Split(model,inputs[0],a[0],std::vector<int>(a.begin()+1,a.end())));break;
+    case OP_RESHAPE: {
+      require(1,0);std::vector<int> shape(outputs[0].dim,outputs[0].dim+outputs[0].numDim);
+      owned.reset(new Reshape(model,inputs[0],shape));break;
+    }
+    case OP_TRANSPOSE: {
+      require(1,2);int n=inputs[0].numDim,encoded=a[0];std::vector<int> perm(n);
+      for(int d=n-1;d>=0;d--){perm[d]=encoded%n;encoded/=n;}
+      if(encoded!=0 || std::set<int>(perm.begin(),perm.end()).size()!=size_t(n))
+        throw std::runtime_error("Invalid archived transpose permutation");
+      owned.reset(new Transpose(model,inputs[0],perm,bool(a[1])));break;
+    }
+    case OP_EW_ADD:case OP_EW_MUL:
+      require(2,0);owned.reset(new Element(model,OpType(kind),inputs[0],inputs[1]));break;
+    case OP_MATMUL:
+      require(2,1);owned.reset(new Matmul(model,inputs[0],inputs[1],ActiMode(a[0])));break;
+    default:throw std::runtime_error("Unsupported archived execution operator");
+  }
+  if(owned->numOutputs!=int(outputs.size()))throw std::runtime_error("Archived output count mismatch");
+  for(size_t i=0;i<outputs.size();i++) {
+    if(owned->outputs[i].numDim!=outputs[i].numDim)throw std::runtime_error("Archived output rank mismatch");
+    for(int d=0;d<outputs[i].numDim;d++)
+      if(owned->outputs[i].dim[d]!=outputs[i].dim[d])throw std::runtime_error("Archived output shape mismatch");
+    // Split/stride annotations are serialized execution state, not a request to
+    // normalize a graph. Preserve them even when a constructor derives new ones.
+    owned->outputs[i]=outputs[i];owned->outputs[i].idx=i;
+  }
+  Op op;op.guid=model->global_unique_id++;op.ptr=owned.release();
+  for(size_t i=0;i<sources.size();i++)add_edge(sources[i]->op,op,sources[i]->idx,i);
+  std::vector<TensorHandle> result;
+  for(int i=0;i<op.ptr->numOutputs;i++) {
+    TensorHandle t=new Tensor(op.ptr->outputs[i]);t->op=op;result.push_back(t);
+  }
+  return result;
+}
+
 TensorHandle Graph::audit_leaf(int kind, const std::vector<int>& metadata,
     const std::vector<float>& values)
 {

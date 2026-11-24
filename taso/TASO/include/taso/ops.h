@@ -497,6 +497,9 @@ public:
   std::string audit_snapshot_json();
   void audit_write_record(std::ostream& out, std::set<size_t>& nodes);
   Graph* audit_clone() { return new Graph(*this); }
+  std::vector<TensorHandle> audit_operator(int kind, const std::vector<TensorHandle>& sources,
+      const std::vector<int>& attributes, const std::vector<std::vector<int> >& input_metadata,
+      const std::vector<std::vector<int> >& output_metadata, int backend_algorithm);
   TensorHandle audit_leaf(int kind, const std::vector<int>& metadata, const std::vector<float>& values);
   TensorHandle audit_pool(int kind, const TensorHandle input, const TensorHandle weight, const std::vector<int>& attributes);
   TensorHandle audit_concat(int axis, int n, const TensorHandle* inputs, const std::vector<int>& flags);

@@ -124,3 +124,13 @@ python3 taso/secondary_experiment/run_candidate_study.py --preflight-only --weig
 ```
 
 Only after all three DNN baseline groups complete should the same command be repeated without `--preflight-only`, retaining the initialization and folder. Existing failed artifacts and the GPU smoke protocol stay unchanged.
+
+### Exact native archive import (v3)
+
+The v2 GPU preflight still failed. A CPU regression now links the actual TASO graph and operator constructors and reproduces a descriptor mismatch: weight replacement updates cached operator inputs without recomputing its output annotations. Rebuilding through public factories derives different annotations. The secondary loader now imports private native operators, preserves all archived input/output descriptors, copy flags and convolution algorithms, and checks exact graph identity. It validates ranks/shapes and rejects unsupported operators; it does not rerun preprocessing or change the original search algorithm.
+
+Numerical archive fidelity is now compared against the saved candidate's own outputs, using the same input scale/seeds. Candidate agreement with the original DNN is a separate recorded result. A faithfully restored but numerically invalid candidate remains invalid and is retained as an experiment result. A finite candidate whose output changes on reconstruction still fails the preflight, with per-seed errors in `round_trip_checks.json`. Nonfinite candidate outputs cannot establish numerical round-trip agreement and are labelled uncheckable. GPU comparisons require both guided and reference graphs to pass original-network numerical checks.
+
+Use a new `candidate_study_3dnns_v3` output directory after committing/updating Colab. The runner rebuilds the native bindings. Keep `--preflight-only --weight-initialization fan_in` for the first run; no model calls are made. Local native regressions cannot substitute for verification on the actual GPU.
+
+The CUDA audit also found that `Conv2D::map()` allocated a bias buffer without initializing it, although every forward path adds it to the output. The buffer now starts at zero for these bias-free convolutions. The shared cost-measurement bias buffer is also zeroed before algorithm selection/timing. A regression executes the production mapping function against deliberately poisoned allocations and checks zero bias for fused and unfused paths. These fixes make future numerical checks meaningful; they do not retroactively establish correctness of historical outputs or GPU speedups.

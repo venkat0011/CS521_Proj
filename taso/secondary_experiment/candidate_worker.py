@@ -55,6 +55,24 @@ def calibrate_outputs(graph,initialization,path):
     return scale
 
 
+def validate_archive_outputs(restored,expected_by_seed,scale,rtol,atol,path):
+    """Check archive fidelity against the candidate itself, independently of quality."""
+    checks={}
+    for seed,expected in expected_by_seed.items():
+        actual=list(restored.audit_outputs(int(seed),scale))
+        # Nonfinite candidates remain invalid study results; NaN equality cannot
+        # establish a numerical round trip and must not be presented as a pass.
+        if not expected or any(v is None or not math.isfinite(v) for v in expected):
+            checks[str(seed)]=dict(passed=False,status='uncheckable_nonfinite_candidate',size=len(actual))
+        else:
+            checks[str(seed)]=dict(compare_outputs(expected,actual,rtol,atol),status='checked')
+        save(path,dict(input_scale=scale,checks=checks))
+        if checks[str(seed)]['status']=='checked' and not checks[str(seed)]['passed']:
+            raise RuntimeError('Archive round trip changes the candidate output; see '+str(path))
+    return dict(numerical_round_trip_established=all(c['passed'] for c in checks.values()),
+                numerical_round_trip_checks=checks)
+
+
 class TimingInput:
     def __init__(self,graph,scale):self.graph,self.scale=graph,scale
     def benchmark_runtime(self,blocks):return self.graph.benchmark_runtime_inputs(blocks,1,self.scale)
@@ -79,7 +97,7 @@ def main(argv=None):
         report['stage']='building_graph'
         graph,source,info=build_study_network(args.network,ts,repo,cfg['weight_seed'],cfg.get('weight_initialization','original'))
         report['stage']='native_api'
-        for api in ('audit_leaf','audit_pool','audit_snapshot','audit_clone','audit_preprocess','audit_outputs','benchmark_runtime_inputs'):
+        for api in ('audit_leaf','audit_operator','audit_snapshot','audit_clone','audit_preprocess','audit_outputs','benchmark_runtime_inputs'):
             if not callable(getattr(graph,api,None)):raise RuntimeError('Rebuild TASO: missing '+api)
         report.update(environment=environment(ts),network_info=info,
                       numerical_scope='Three finite random input seeds; outputs calibrated on original graph; no universal proof',
@@ -100,6 +118,12 @@ def main(argv=None):
             raise RuntimeError('Original numerical reference is nonfinite or too small for the configured tolerance')
         save(out/'numerical_reference.json',dict(scale=scale,seeds=references,rtol=cfg['rtol'],atol=cfg['atol'],
              scope='Finite random inputs and unchanged seeded weights; agreement is empirical, not a proof for every input'))
+        repeatability={str(seed):compare_outputs(reference,list(original.audit_outputs(seed,scale)),
+            cfg['rtol'],cfg['atol']) for seed,reference in references.items()}
+        save(out/'original_repeatability.json',dict(input_scale=scale,checks=repeatability,
+            scope='Two fresh execution mappings per input seed before search'))
+        if not all(check['passed'] for check in repeatability.values()):
+            raise RuntimeError('Original graph output changes across fresh mappings; see original_repeatability.json')
         if args.mode=='kimi':
             if args.baseline is None or json.loads((args.baseline/'worker_result.json').read_text()).get('network')!=args.network:
                 raise ValueError('The recorded TASO reference must use the same DNN')
@@ -138,12 +162,15 @@ def main(argv=None):
             report['stage']='archive_restore'
             restored_reference,restoration=restore(ts,path)
             report['reference_restoration']=dict(source=str(path),**restoration)
-            for seed,reference in references.items():
-                if not compare_outputs(reference,list(restored_reference.audit_outputs(seed,scale)),cfg['rtol'],cfg['atol'])['passed']:
-                    raise RuntimeError('Restored TASO graph fails numerical validation')
+            baseline_observation=args.baseline/choices[0]['directory']
+            expected=json.loads((baseline_observation/'outputs.json').read_text())
+            report['reference_restoration'].update(validate_archive_outputs(restored_reference,expected,
+                reference_report['timing_input_scale'],cfg['rtol'],cfg['atol'],out/'reference_round_trip_checks.json'))
+            report['reference_numerical_checks']={str(seed):compare_outputs(reference,
+                list(restored_reference.audit_outputs(seed,scale)),cfg['rtol'],cfg['atol']) for seed,reference in references.items()}
         if restored_reference is not None:
             reference_dir=out/'restored_taso_reference';reference_dir.mkdir()
-            reference_timing=dict(numerically_valid=True)
+            reference_timing=dict(numerically_valid=all(c['passed'] for c in report['reference_numerical_checks'].values()))
             measure(TimingInput(restored_reference,scale),argparse.Namespace(blocks=cfg['blocks'],spread_threshold_pct=10.),reference_dir,reference_timing)
             report['restored_reference_timing']=reference_timing
         for number,(expansion,snapshot,role) in enumerate(retained):
@@ -166,18 +193,18 @@ def main(argv=None):
                 observation['numerical_checks'][str(seed)]=check
                 observation['numerically_valid'] &= check['passed']
             save(directory/'outputs.json',values_by_seed)
+            report['observations'].append(observation);save(out/'worker_result.json',report)
             if args.mode=='baseline' and expansion in cfg['reference_points']:
                 from restore_graph import restore
                 report['stage']='archive_restore'
                 restored,restoration=restore(ts,directory/'execution_graph.json')
+                restoration.update(validate_archive_outputs(restored,values_by_seed,scale,
+                    cfg['rtol'],cfg['atol'],directory/'round_trip_checks.json'))
                 observation['archive_round_trip']=restoration
-                for seed,reference in references.items():
-                    if not compare_outputs(reference,list(restored.audit_outputs(seed,scale)),cfg['rtol'],cfg['atol'])['passed']:
-                        raise RuntimeError('Recorded reference fails round-trip numerical validation')
             report['stage']='timing'
             timing_args=argparse.Namespace(blocks=cfg['blocks'],spread_threshold_pct=10.)
             measure(TimingInput(execution,scale),timing_args,directory,observation)
-            report['observations'].append(observation);save(out/'worker_result.json',report)
+            save(out/'worker_result.json',report)
         if args.mode=='baseline' and not any(o['expansion']==cfg['budget'] for o in report['observations']):
             raise RuntimeError('Reference search did not reach the comparison budget; no Kimi calls should be made')
         # Lossless compression only after the complete journal has closed.

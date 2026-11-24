@@ -116,7 +116,7 @@ Op Model::get_or_create_split(const Tensor& _input, int _axis, int _n)
 
 Split::Split(Model* _model, const Tensor& _input,
              int _axis, const std::vector<int>& _sizes)
-  : OpBase(_input, model, OP_SPLIT), axis(_axis), sizes(_sizes)
+  : OpBase(_input, _model, OP_SPLIT), axis(_axis), sizes(_sizes)
 {
   assert(_sizes.size() <= MAX_NUM_OUTPUTS);
   numOutputs = _sizes.size();

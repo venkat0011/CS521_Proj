@@ -20,7 +20,7 @@ from unittest.mock import patch
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'secondary_experiment'))
 from candidate_identity import prepare, node_label, equivalent, Journal
-from candidate_worker import compare_outputs, TimingInput, calibrate_outputs
+from candidate_worker import compare_outputs, TimingInput, calibrate_outputs, validate_archive_outputs
 import candidate_study
 from restore_graph import restore
 
@@ -79,7 +79,10 @@ class CandidateTests(unittest.TestCase):
             def __init__(self):self.nodes=[];self.edges=[]
             def audit_leaf(self,kind,metadata,data):
                 leaf=node(10,kind,[]);leaf['inputs']=[metadata];leaf['outputs']=[metadata];self.nodes.append(leaf);return 10
-            def relu(self,x,inplace=False):self.nodes.append(node(20,8,[int(inplace)]));self.edges.append([x,0,20,0]);return 20
+            def audit_operator(self,kind,inputs,attributes,input_metadata,output_metadata,backend_algorithm):
+                # Fake native boundary deliberately preserves only the legitimate
+                # relu layout, so a corrupt archived shape still fails equality.
+                self.nodes.append(node(20,kind,attributes));self.edges.append([inputs[0],0,20,0]);return [20]
             def audit_preprocess(self):return self
             def audit_snapshot(self):return json.dumps(dict(nodes=self.nodes,edges=self.edges))
         with tempfile.TemporaryDirectory() as tmp,patch.dict(sys.modules,{'numpy':types.ModuleType('numpy')}):
@@ -143,7 +146,7 @@ class CandidateTests(unittest.TestCase):
             report=dict(journal='journal.jsonl',search=dict(expansions=1,counters=dict(generated=1,admitted=1)),
                         numerical_checks={},numerically_valid=True,observations=[observation],
                         reference_restoration=dict(exact_graph_restoration=True,exact_backend_plan_restoration=True),
-                        restored_reference_timing=dict(timing=[dict(gpu=dict(median_ms=2.)),dict(gpu=dict(median_ms=2.01))],timing_concerns=False))
+                        restored_reference_timing=dict(numerically_valid=True,timing=[dict(gpu=dict(median_ms=2.)),dict(gpu=dict(median_ms=2.01))],timing_concerns=False))
             (path/'worker_result.json').write_text(json.dumps(report))
             (path/'search_trace.json').write_text(json.dumps(dict(phases=[dict(rules=[dict(rule_index=0,attempts=1)])])))
         with tempfile.TemporaryDirectory() as tmp,contextlib.redirect_stdout(io.StringIO()):
@@ -153,6 +156,12 @@ class CandidateTests(unittest.TestCase):
             self.assertFalse(result['checkpoints'][-1]['same_graph_as_previous'])
             self.assertEqual(result['checkpoints'][-1]['lineage'][0]['rule_id'],'builtin:000')
             self.assertTrue(result['gpu_evidence']['every_guided_mapping_median_below_every_reference_mapping_median'])
+            path=root/'kimi/worker_result.json';report=json.loads(path.read_text())
+            report['restored_reference_timing']['numerically_valid']=False
+            path.write_text(json.dumps(report))
+            invalid=compare_trial(root/'kimi',root/'baseline',dict(reference_points=[1,2],budget=1))
+            self.assertFalse(invalid['gpu_evidence']['valid_for_comparison'])
+            self.assertFalse(invalid['gpu_evidence']['every_guided_mapping_median_below_every_reference_mapping_median'])
             path=root/'kimi/worker_result.json';report=json.loads(path.read_text());report['search']['counters']['generated']=99
             path.write_text(json.dumps(report))
             with self.assertRaises(ValueError):compare_trial(root/'kimi',root/'baseline',dict(reference_points=[1,2],budget=1))
@@ -243,6 +252,126 @@ class CandidateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp,patch.object(candidate_study.subprocess,'run',run),contextlib.redirect_stdout(io.StringIO()):
             args=argparse.Namespace(out=Path(tmp),reference_budget=500,blocks=4,networks=['squeezenet'],preflight_only=True)
             self.assertEqual(candidate_study.run(args),1);self.assertEqual(len(calls),1)
+
+    def test_roundtrip_checks_candidate_output_independently_of_original_agreement(self):
+        restored=types.SimpleNamespace(audit_outputs=lambda seed,scale:[2.,3.])
+        self.assertFalse(compare_outputs([1.,1.],[2.,3.],1e-3,1e-6)['passed'])
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'checks.json'
+            result=validate_archive_outputs(restored,{'1':[2.,3.]},1.,1e-3,1e-6,path)
+            self.assertTrue(result['numerical_round_trip_established'])
+            with self.assertRaisesRegex(RuntimeError,'changes the candidate output'):
+                validate_archive_outputs(restored,{'1':[1.,1.]},1.,1e-3,1e-6,path)
+            self.assertFalse(json.loads(path.read_text())['checks']['1']['passed'])
+            result=validate_archive_outputs(restored,{'1':[None,3.]},1.,1e-3,1e-6,path)
+            self.assertFalse(result['numerical_round_trip_established'])
+            self.assertEqual(result['numerical_round_trip_checks']['1']['status'],'uncheckable_nonfinite_candidate')
+
+    def test_baseline_worker_retains_invalid_candidate_with_faithful_roundtrip(self):
+        import candidate_worker as cw
+        class G:
+            def __init__(self,values):self.values=values
+            def audit_outputs(self,seed,scale):return [v*scale for v in self.values]
+            def audit_clone(self):return G(self.values)
+            def audit_preprocess(self):return self
+            def audit_snapshot(self):return json.dumps(dict(native_graph_id=1,nodes=[node(1,0,[])],edges=[]))
+            def cost(self):return 1.
+            def audit_leaf(self,*args):pass
+            def audit_operator(self,*args):pass
+            def benchmark_runtime_inputs(self,*args):pass
+        def optimize(graph,select,**kw):
+            select(graph,dict(expansions=0))
+            select(G([2.,2.]),dict(expansions=100))
+            select(G([2.,2.]),dict(expansions=250))
+            trace=Path(kw['trace_file']);trace.write_text('{}')
+            Path(str(trace)+'.candidates.jsonl').write_text('{"event":"fixture"}\n')
+            return G([2.,2.])
+        def restore_candidate(ts,path):
+            values=json.loads((Path(path).parent/'outputs.json').read_text())['1']
+            return G(values),dict(exact_graph_restoration=True)
+        with tempfile.TemporaryDirectory() as tmp,patch.dict(sys.modules,{'taso':types.SimpleNamespace(optimize_with_checkpoints=optimize)}),\
+             patch.object(cw,'build_study_network',return_value=(G([1.,1.]),'source',{})),\
+             patch.object(cw,'optimize'),patch.object(cw,'environment',return_value={}),\
+             patch.object(cw,'search_observation',return_value=dict(expansions=500)),\
+             patch.object(cw,'measure',side_effect=lambda graph,args,directory,report:report.update(timing=[])),\
+             patch('restore_graph.restore',side_effect=restore_candidate):
+            root=Path(tmp);config=root/'config.json';out=root/'attempt';out.mkdir()
+            config.write_text(json.dumps(dict(networks=['squeezenet'],weight_seed=521,weight_initialization='fan_in',
+                reference_budget=500,budget=100,alpha=1.05,input_seeds=[1,2,3],atol=1e-6,rtol=1e-3,reference_points=[100,250,500],blocks=4)))
+            self.assertEqual(cw.main(['--config',str(config),'--out',str(out),'--network','squeezenet','--mode','baseline','--attempt','1']),0)
+            report=json.loads((out/'worker_result.json').read_text())
+            self.assertEqual(report['status'],'completed');self.assertFalse(report['numerically_valid'])
+            candidates=[o for o in report['observations'] if o['expansion']>0]
+            self.assertEqual(len(candidates),3)
+            self.assertTrue(all(o['archive_round_trip']['numerical_round_trip_established'] for o in candidates))
+
+    @unittest.skipUnless(shutil.which('c++'),'C++ compiler required')
+    def test_production_cuda_map_zeros_poisoned_bias_allocation(self):
+        source=(ROOT/'TASO/src/cudnn/conv2d_kernel.cu').read_text()
+        body=source[source.index('void Conv2D::map(void)'):source.index('void Conv2D::unmap(void)')]
+        fixture=r"""
+#include <cassert>
+#include <cstdlib>
+#include <cstring>
+#include <vector>
+using DATATYPE=float;
+const int CUDNN_TENSOR_NCHW=0,CUDNN_DATA_FLOAT=0,CUDNN_CROSS_CORRELATION=0,CUDNN_TENSOR_OP_MATH=0;
+const int CUDNN_NOT_PROPAGATE_NAN=0,AC_MODE_NONE=0;
+using cudnnActivationMode_t=int;
+int get_activation_mode(int value){return value;}
+#define checkCUDA(x) assert((x)==0)
+#define checkCUDNN(x) assert((x)==0)
+int cudaMalloc(void** out,size_t size){*out=malloc(size);memset(*out,0xa5,size);return 0;}
+int cudaMemset(void* ptr,int value,size_t size){memset(ptr,value,size);return 0;}
+#define API(name) template<class... Args> int name(Args... args){return 0;}
+API(cudnnCreateTensorDescriptor) API(cudnnCreateFilterDescriptor) API(cudnnCreateConvolutionDescriptor)
+API(cudnnSetTensor4dDescriptor) API(cudnnSetFilter4dDescriptor) API(cudnnSetConvolution2dDescriptor)
+API(cudnnSetConvolutionMathType) API(cudnnSetConvolutionGroupCount)
+API(cudnnCreateActivationDescriptor) API(cudnnSetActivationDescriptor)
+int cudnnGetConvolution2dForwardOutputDim(int,int,int,int* n,int* c,int* h,int* w){*n=1;*c=2;*h=2;*w=2;return 0;}
+struct Tensor{int dim[4]={1,2,2,2};void* data_ptr=nullptr;};
+struct Conv2D{
+ Tensor inputs[2],outputs[1];
+ int inputTensor=0,biasTensor=0,outputTensor=0,filterDesc=0,convDesc=0,actiDesc=0;
+ int strideH=1,strideW=1,activation=0;void* biasPtr=nullptr;
+ void get_padding(int* h,int* w){*h=0;*w=0;}
+ void map(void);
+};
+"""
+        main=r"""
+int main(){for(int activation:{0,2}){
+ Conv2D op;op.activation=activation;op.inputs[1].dim[0]=2;op.map();
+ auto bytes=static_cast<unsigned char*>(op.biasPtr);
+ for(size_t i=0;i<2*sizeof(float);i++)assert(bytes[i]==0);
+ assert(static_cast<unsigned char*>(op.outputs[0].data_ptr)[0]==0xa5);
+ free(op.biasPtr);free(op.outputs[0].data_ptr);
+}}
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'bias.cc';exe=Path(tmp)/'bias';path.write_text(fixture+body+main)
+            process=subprocess.run(['c++','-std=c++11',str(path),'-o',str(exe)],capture_output=True,text=True)
+            self.assertEqual(process.returncode,0,process.stderr)
+            subprocess.run([str(exe)],check=True,capture_output=True,text=True)
+
+    @unittest.skipUnless(shutil.which('c++'),'C++ compiler required')
+    def test_actual_native_folded_metadata_import_without_cache_mutation(self):
+        # Link real production graph/constructors with a CPU allocation backend.
+        # This reproduces the mismatch, rather than mirroring importer logic.
+        files=['ops','noop','conv2d','pool2d','activation','concat','split','reshape','transpose','element','matmul']
+        with tempfile.TemporaryDirectory() as tmp:
+            executable=Path(tmp)/'native_import'
+            linker='-Wl,-dead_strip' if sys.platform=='darwin' else '-Wl,--gc-sections'
+            command=['c++','-std=c++11','-ffunction-sections','-fdata-sections',linker,
+                '-I',str(ROOT/'TASO/include'),'-I',str(ROOT/'tests/stubs'),str(ROOT/'tests/native_archive_fixture.cc')]
+            command += [str(ROOT/'TASO/src/core'/f'{name}.cc') for name in files]
+            command += ['-o',str(executable)]
+            result=subprocess.run(command,capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stderr)
+            result=subprocess.run([str(executable)],capture_output=True,text=True,check=True)
+            original,restored,normalized=map(json.loads,result.stdout.splitlines())
+            from restore_graph import prepared_snapshot
+            self.assertTrue(equivalent(prepared_snapshot(original),prepared_snapshot(restored)))
+            self.assertFalse(equivalent(prepared_snapshot(original),prepared_snapshot(normalized)))
 
     @unittest.skipUnless(shutil.which('c++'),'C++ compiler required')
     def test_actual_native_leaf_metadata_parser_preserves_layout(self):
