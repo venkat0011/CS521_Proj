@@ -210,6 +210,17 @@ cdef class PyGraph:
     def benchmark_runtime_inputs(self, int blocks, int seed, float scale):
         return self.p_graph.benchmark_runtime_inputs(blocks, seed, scale)
 
+    def audit_leaf(self, int kind, metadata, data):
+        cdef vector[int] layout = metadata
+        cdef vector[float] values = data
+        cdef TensorHandle handle = self.p_graph.audit_leaf(kind, layout, values)
+        return PyTensor(ctypes.cast(<unsigned long long>handle, ctypes.c_void_p))
+
+    def audit_pool(self, int kind, PyTensor input, PyTensor weight, attributes):
+        cdef vector[int] parameters = attributes
+        cdef TensorHandle handle = self.p_graph.audit_pool(kind, input.ctensor, weight.ctensor, parameters)
+        return PyTensor(ctypes.cast(<unsigned long long>handle, ctypes.c_void_p))
+
     def audit_concat(self, int axis, inputs, flags):
         cdef TensorHandle values[32]
         cdef vector[int] copy_flags

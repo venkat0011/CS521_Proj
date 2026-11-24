@@ -17,10 +17,10 @@ def configuration(args):
     cfg.update(model='moonshotai/kimi-k3.1-pro',models=['moonshotai/kimi-k3.1-pro'],networks=list(getattr(args,'networks',['squeezenet','resnext50','inceptionv3'])),
                budget=100,checkpoint_interval=25,gpu_feedback=False,reference_budget=args.reference_budget,
                reference_points=sorted({100,250,args.reference_budget}),blocks=args.blocks,
-               input_seeds=[1,2,3],rtol=1e-3,atol=1e-6,required_successes=3,max_attempts=5)
+               weight_initialization=getattr(args,'weight_initialization','original'),input_seeds=[1,2,3],rtol=1e-3,atol=1e-6,required_successes=3,max_attempts=5)
     cfg['source_sha256']={str(p.relative_to(HERE.parents[1])):hashlib.sha256(p.read_bytes()).hexdigest()
         for p in [HERE/'candidate_study.py',HERE/'candidate_worker.py',HERE/'candidate_identity.py',
-                  HERE/'restore_graph.py',HERE/'graph_archive.py',HERE/'analyze_candidates.py',HERE/'gpu_timing_smoke.py',
+                  HERE/'restore_graph.py',HERE/'study_networks.py',HERE/'graph_archive.py',HERE/'analyze_candidates.py',HERE/'gpu_timing_smoke.py',
                   HERE.parent/'TASO/include/taso/ops.h',HERE.parent/'TASO/include/taso/candidate_audit.h',
                   HERE.parent/'TASO/include/taso/candidate_snapshot.h',HERE.parent/'TASO/src/core/ops.cc',
                   HERE.parent/'TASO/src/core/substitution.cc',HERE.parent/'TASO/src/cudnn/ops_cudnn.cu',
@@ -60,6 +60,11 @@ def run_group(root,mode,network,cfg,path,reference_dirs):
                     record=json.loads(report_path.read_text());record.update(status='failed',error='Worker timeout')
         record.update(directory=str(directory),network=network);save(report_path,record);reports.append(record)
         print(f'{mode}/{network} attempt {attempt}: {record["status"]}; numerically_valid={record.get("numerically_valid","unknown")}',flush=True)
+        if record['status']=='failed':
+            print('  '+record.get('error','Worker failed without a Python error; inspect worker.log'),flush=True)
+            if record.get('fatal_preflight_error'):
+                print('  Stopping this DNN group: repeating this preflight error is not useful.',flush=True)
+                break
     return dict(successful=sum(r['status']=='completed' for r in reports),attempts=reports)
 
 
@@ -99,6 +104,7 @@ def run(args):
 def main(argv=None):
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--out',type=Path,required=True)
     p.add_argument('--reference-budget',type=int,default=500)
+    p.add_argument('--weight-initialization',choices=['original','fan_in'],default='original')
     p.add_argument('--networks',nargs='+',choices=['squeezenet','resnext50','inceptionv3'],default=['squeezenet','resnext50','inceptionv3']);
     p.add_argument('--blocks',type=int,default=20);p.add_argument('--preflight-only',action='store_true')
     args=p.parse_args(argv)

@@ -373,6 +373,58 @@ Graph::Graph()
   //printf("Initialize a graph\n");
 }
 
+TensorHandle Graph::audit_leaf(int kind, const std::vector<int>& metadata,
+    const std::vector<float>& values)
+{
+  if ((kind != OP_INPUT && kind != OP_WEIGHT) || metadata.size() < 2 ||
+      metadata[0] != Tensor::MAGIC_NUMBER || metadata[1] < 0 || metadata[1] > MAX_DIM)
+    throw std::runtime_error("Invalid archived leaf metadata");
+  Tensor tensor; tensor.numDim=metadata[1]; tensor.idx=0;
+  tensor.op=Op(kind==OP_INPUT ? GUID_INPUT : GUID_WEIGHT, nullptr);
+  size_t index=2,volume=1;
+  for(int d=0;d<tensor.numDim;d++) {
+    if(index>=metadata.size() || metadata[index]<=0)throw std::runtime_error("Invalid archived dimensions");
+    tensor.dim[d]=metadata[index++];volume*=tensor.dim[d];
+    if(volume > size_t(512)*1024*1024/sizeof(DATATYPE))throw std::runtime_error("Archived leaf exceeds size limit");
+  }
+  for(int d=0;d<tensor.numDim;d++) {
+    if(index>=metadata.size() || metadata[index]<0)throw std::runtime_error("Invalid archived strides");
+    tensor.stride[d]=metadata[index++];
+  }
+  for(int d=0;d<tensor.numDim;d++) {
+    if(index>=metadata.size() || metadata[index]<0 || metadata[index]>MAX_NUM_SPLITS)
+      throw std::runtime_error("Invalid archived split metadata");
+    tensor.split[d].num=metadata[index++];
+    for(int k=0;k<tensor.split[d].num;k++) {
+      if(index>=metadata.size())throw std::runtime_error("Truncated archived split metadata");
+      tensor.split[d].pos[k]=metadata[index++];
+    }
+  }
+  if(index!=metadata.size())throw std::runtime_error("Unexpected archived tensor metadata");
+  if(kind==OP_INPUT) {
+    if(!values.empty())throw std::runtime_error("Input archive unexpectedly contains weights");
+    tensor.data_ptr=nullptr; return input_wrapper(&tensor);
+  }
+  if(values.size()!=volume)throw std::runtime_error("Archived weight size mismatch");
+  tensor.data_ptr=const_cast<float*>(values.data());
+  return new_weight(tensor);
+}
+
+TensorHandle Graph::audit_pool(int kind, const TensorHandle input,
+    const TensorHandle weight, const std::vector<int>& attributes)
+{
+  if((kind!=OP_POOL2D_MAX && kind!=OP_POOL2D_AVG) || attributes.size()!=6 ||
+      attributes[0]<=0 || attributes[1]<=0 || attributes[2]<=0 || attributes[3]<=0 ||
+      attributes[4]<0 || attributes[4]>1 || attributes[5]<0 || attributes[5]>3)
+    throw std::runtime_error("Invalid archived pooling operator");
+  Op op=model->get_or_create_pool2d(*input,*weight,static_cast<OpType>(kind),
+      attributes[0],attributes[1],attributes[2],attributes[3],
+      static_cast<PaddingMode>(attributes[4]),static_cast<ActiMode>(attributes[5]));
+  if(op==Op::INVALID_OP)throw std::runtime_error("Cannot restore archived pool");
+  add_edge(input->op,op,input->idx,0);add_edge(weight->op,op,weight->idx,1);
+  TensorHandle tensor=new Tensor(op.ptr->outputs[0]);tensor->op=op;return tensor;
+}
+
 TensorHandle Graph::audit_concat(int axis, int n, const TensorHandle* inputs,
     const std::vector<int>& flags)
 {

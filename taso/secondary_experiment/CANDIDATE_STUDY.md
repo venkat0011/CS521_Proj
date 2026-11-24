@@ -158,3 +158,19 @@ identity does not mean two different structures are inequivalent functions.
 Numerical agreement, complete lineage and repeated timing strengthen the argument,
 but hardware variability, fixed ordering and backend plan differences remain
 material limits on causal claims about GPU speedups.
+
+### Diagnosing the first preflight failures
+
+The first GPU run failed before Kimi was started. SqueezeNet failed exact archive restoration; the old loader discarded tensor stride/split metadata and recreated pooling weights. Restoration now preserves these values and sharing; equality checks remain strict. A mismatch writes an adjacent `.restore_failure.json` diagnostic. GPU confirmation is still required.
+
+ResNeXt-50 and Inception-v3 could not establish a finite, nonzero original output. The original error did not identify NaN, infinity, zero or empty outputs. `calibration_report.json` now records those counts for each input scale. No numerical disagreement is relabelled as a pass. Deterministic reference/restoration errors stop the affected group after its first failed attempt, rather than repeating five times.
+
+The default `--weight-initialization original` keeps historical initialization. The explicit `--weight-initialization fan_in` option creates a new secondary workload with float32 weights sampled uniformly from [-sqrt(6/fan_in), sqrt(6/fan_in)]. This is a workload change, not a repair to historical measurements. Both TASO and Kimi use the same seed and weights, all three architectures retain the same shapes, and the executed construction is recorded and supplied to Kimi. Numerical calibration must still pass.
+
+After updating/rebuilding, use a new output folder and run the zero-model-call preflight:
+
+```bash
+python3 taso/secondary_experiment/run_candidate_study.py --preflight-only --weight-initialization fan_in --out "/content/drive/MyDrive/CS521 Result/secondary_experiment/candidate_study_3dnns_v2"
+```
+
+Only after all three DNN baseline groups complete should the same command be repeated without `--preflight-only`, retaining the initialization and folder. Existing failed artifacts and the GPU smoke protocol stay unchanged.

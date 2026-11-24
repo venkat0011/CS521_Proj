@@ -1,4 +1,4 @@
-"""Restore supported folded SqueezeNet graphs; require exact descriptor verification."""
+"""Restore supported archived inference graphs; require exact descriptor verification."""
 import json
 import math
 from pathlib import Path
@@ -26,24 +26,19 @@ def restore(ts, path):
     def shape(n):
         tensor=n['outputs'][0];return tuple(tensor[2:2+tensor[1]])
     while remaining:
-        ready=[n for n in sorted(remaining) if all(s in outputs for s,_ in incoming[n].values()) or
-               nodes[n]['type'] in (6,7) and incoming[n].get(0,(None,0))[0] in outputs]
+        ready=[n for n in sorted(remaining) if all(s in outputs for s,_ in incoming[n].values())]
         if not ready:raise ValueError('Archive is cyclic or contains unresolved dependencies')
         for gid in ready:
             node=nodes[gid];kind=node['type'];a=node['attributes'];edges=incoming[gid]
             def x(port=0):
                 s,sp=edges[port];return outputs[s][sp]
-            if kind==0:t=graph.new_input(dims=shape(node))
+            if kind==0:t=graph.audit_leaf(0,node['outputs'][0],[])
             elif kind==1:
-                # Native pool factories recreate their own deterministic weight helper.
-                if consumers[gid] and all(nodes[d]['type'] in (6,7) for d in consumers[gid]):
-                    outputs[gid]=[];remaining.remove(gid);continue
-                data=np.frombuffer(bytes.fromhex(node['weight_hex']),dtype=np.float32).reshape(shape(node))
-                t=graph.new_weight(dims=shape(node),data=data)
+                data=np.frombuffer(bytes.fromhex(node['weight_hex']),dtype=np.float32)
+                t=graph.audit_leaf(1,node['outputs'][0],data)
             elif kind==3:t=graph.conv2d(input=x(),weight=x(1),strides=tuple(a[:2]),padding=padding[a[2]],activation=activation[a[3]])
             elif kind in (6,7):
-                fn=graph.maxpool2d if kind==6 else graph.avgpool2d
-                t=fn(input=x(),kernels=tuple(a[:2]),strides=tuple(a[2:4]),padding=padding[a[4]],activation=activation[a[5]])
+                t=graph.audit_pool(kind,x(),x(1),a)
             elif kind==8:t=graph.relu(x(),inplace=bool(a[0]))
             elif kind==9:t=graph.sigmoid(x(),inplace=bool(a[0]))
             elif kind==10:t=graph.tanh(x(),inplace=bool(a[0]))
@@ -63,7 +58,16 @@ def restore(ts, path):
     graph=graph.audit_preprocess()
     restored=json.loads(graph.audit_snapshot())
     if equivalent(prepared_snapshot(saved),prepared_snapshot(restored)) is not True:
-        raise ValueError('Restored graph does not exactly match archived structure/settings/weights')
+        from collections import Counter
+        from candidate_identity import node_label
+        expected=Counter(node_label(n) for n in saved['nodes']);actual=Counter(node_label(n) for n in restored['nodes'])
+        diagnostics=dict(archived_node_count=len(saved['nodes']),restored_node_count=len(restored['nodes']),
+            archived_edge_count=len(saved['edges']),restored_edge_count=len(restored['edges']),
+            missing_descriptor_count=sum((expected-actual).values()),extra_descriptor_count=sum((actual-expected).values()),
+            missing_descriptors=[{k:v for k,v in n.items() if k not in ('weight_hex','weight_blob')} for n in saved['nodes'] if expected[node_label(n)]>actual[node_label(n)]][:12],
+            extra_descriptors=[{k:v for k,v in n.items() if k not in ('weight_hex','weight_blob')} for n in restored['nodes'] if actual[node_label(n)]>expected[node_label(n)]][:12])
+        Path(str(path)+'.restore_failure.json').write_text(json.dumps(diagnostics,indent=2)+'\n')
+        raise ValueError('Restored graph does not exactly match archived structure/settings/weights; see '+str(path)+'.restore_failure.json')
     # Algorithms are execution metadata, not computational graph identity.
     plan_match=equivalent(prepared_snapshot(saved,True),prepared_snapshot(restored,True))
     return graph,dict(exact_graph_restoration=True,exact_backend_plan_restoration=plan_match)

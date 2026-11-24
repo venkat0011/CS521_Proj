@@ -18,6 +18,7 @@ class CandidateRunner(Runner):
         command=[str(python),str(HERE/'candidate_study.py'),'--out',str(results),
                  '--reference-budget',str(args.reference_budget),'--blocks',str(args.blocks)]
         command.extend(['--networks']+args.networks)
+        command.extend(['--weight-initialization',args.weight_initialization])
         if args.preflight_only:command.append('--preflight-only')
         return command
 
@@ -26,6 +27,8 @@ def main(argv=None):
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--out',type=Path)
     p.add_argument('--networks',nargs='+',choices=['squeezenet','resnext50','inceptionv3'],default=['squeezenet','resnext50','inceptionv3'])
+    p.add_argument('--weight-initialization',choices=['original','fan_in'],default='original',
+                   help='Explicit workload choice; fan_in uses new seeded scaled weights in both TASO and Kimi')
     p.add_argument('--reference-budget',type=int,default=500)
     p.add_argument('--blocks',type=int,default=20)
     p.add_argument('--preflight-only',action='store_true',help='Run three baseline references per DNN; zero model calls')

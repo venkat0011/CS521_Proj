@@ -289,6 +289,8 @@ cdef extern from "taso/ops.h" namespace "taso":
         vector[float] benchmark_runtime_inputs(int blocks, int seed, float scale) except +
         string audit_snapshot_json() except +
         Graph* audit_clone() except +
+        TensorHandle audit_leaf(int kind, const vector[int]& metadata, const vector[float]& values) except +
+        TensorHandle audit_pool(int kind, const TensorHandle input, const TensorHandle weight, const vector[int]& attributes) except +
         TensorHandle audit_concat(int axis, int n, const TensorHandle* inputs, const vector[int]& flags) except +
         Graph* preprocess_weights() except +
         vector[float] audit_outputs(int seed, float scale) except +

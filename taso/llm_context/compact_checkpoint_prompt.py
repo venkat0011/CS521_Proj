@@ -26,7 +26,7 @@ CONTRACT_HASHES = {
     'void GraphXfer::run(': '93e8a7ea0c3160bd396c185e44e90239780efd15331b07346a998f1d8ead13e1',
     'bool GraphXfer::can_match(': '26ec7351fa841160b3dbcf67f6a579e23afa4dc5e8deb5f313abbf3dd52e2322',
 }
-HEADER_HASH = 'c96bc22a2a98aa4940c6543bcd63c75462bab8d1aa3a1c1470d0995a3b65afe5'
+HEADER_HASH = '875e0a0d03475ef31aa469fee2f4455bb96a502109fc24d9271baa2dbd50e7d8'
 SEARCH_CONTRACT = (
     'TASO orders a persistent priority queue of whole graphs by estimated cost. '
     'One expansion pops one graph and tries every enabled rule at every valid match. '

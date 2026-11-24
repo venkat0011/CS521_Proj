@@ -16,7 +16,7 @@ sys.path.insert(0, str(HERE.parent / 'benchmarks'))
 sys.path.insert(0, str(HERE.parent / 'llm_context'))
 sys.path.insert(0, str(HERE.parent))
 from worker import all_rules, environment, optimize, save, search_observation
-from networks import build_network
+from study_networks import build_study_network
 from gpu_timing_smoke import measure
 from graph_archive import save_snapshot, externalize_node
 
@@ -33,6 +33,28 @@ def compare_outputs(reference, values, rtol, atol):
                 max_scaled_error=max((e / (atol + rtol*abs(a)) for a,e in zip(reference,errors)), default=None))
 
 
+def calibrate_outputs(graph,initialization,path):
+    scales=[1.,1e-2,1e-4,1e-8,1e2] if initialization=='fan_in' else [1e-30,1e-35,1e-20,1e-10,1.]
+    calibration=dict(weight_initialization=initialization,probes=[])
+    usable=None
+    for probe_scale in scales:
+        probe=list(graph.audit_outputs(1,probe_scale))
+        finite=[abs(v) for v in probe if math.isfinite(v)]
+        statistics=dict(input_scale=probe_scale,output_count=len(probe),finite_count=len(finite),
+            nan_count=sum(math.isnan(v) for v in probe),infinity_count=sum(math.isinf(v) for v in probe),
+            zero_count=sum(v==0 for v in probe),max_finite_abs=max(finite,default=None))
+        calibration['probes'].append(statistics);save(path,calibration)
+        if probe and len(finite)==len(probe) and max(finite)>0:
+            usable=(probe_scale,max(finite));break
+    if usable is None:
+        raise RuntimeError('Original graph has no usable finite nonzero numerical reference; see calibration_report.json. '
+                           'The explicit --weight-initialization fan_in option creates a new seeded secondary workload.')
+    maximum_scale=1e6 if initialization=='fan_in' else 1.
+    scale=struct.unpack('f',struct.pack('f',max(1e-35,min(maximum_scale,usable[0]/usable[1]))))[0]
+    calibration['selected_input_scale']=scale;save(path,calibration)
+    return scale
+
+
 class TimingInput:
     def __init__(self,graph,scale):self.graph,self.scale=graph,scale
     def benchmark_runtime(self,blocks):return self.graph.benchmark_runtime_inputs(blocks,1,self.scale)
@@ -47,30 +69,30 @@ def main(argv=None):
     args=p.parse_args(argv);cfg=json.loads(args.config.read_text());out=args.out
     weight_store=args.config.resolve().parent/'weights'
     report=dict(status='started',mode=args.mode,attempt=args.attempt,model_calls=0,
-                observations=[],gpu_feedback=False,network=args.network)
+                observations=[],gpu_feedback=False,network=args.network,stage='starting')
     save(out/'worker_result.json',report)
     controller=None
     try:
         if args.network not in cfg['networks']:raise ValueError('DNN is outside the saved study configuration')
         repo=HERE.parent/'TASO';os.environ['TASO_HOME']=str(repo);os.environ.pop('TASO_CANDIDATE_AUDIT',None)
         import taso as ts
-        graph,source,info=build_network(args.network,ts,repo,cfg['weight_seed'])
-        for api in ('audit_snapshot','audit_clone','audit_preprocess','audit_outputs','benchmark_runtime_inputs'):
+        report['stage']='building_graph'
+        graph,source,info=build_study_network(args.network,ts,repo,cfg['weight_seed'],cfg.get('weight_initialization','original'))
+        report['stage']='native_api'
+        for api in ('audit_leaf','audit_pool','audit_snapshot','audit_clone','audit_preprocess','audit_outputs','benchmark_runtime_inputs'):
             if not callable(getattr(graph,api,None)):raise RuntimeError('Rebuild TASO: missing '+api)
         report.update(environment=environment(ts),network_info=info,
                       numerical_scope='Three finite random input seeds; outputs calibrated on original graph; no universal proof',
                       timing_input_seed=1)
         budget=cfg['reference_budget'] if args.mode=='baseline' else cfg['budget']
         # Only an all-rule discarded warm-up; no model requests in this search.
+        report['stage']='warmup'
         optimize(ts,graph,all_rules(cfg['budget']),cfg['alpha'],out/'warmup_trace.json',cfg['budget'])
-        graph,_,_=build_network(args.network,ts,repo,cfg['weight_seed'])
+        graph,_,_=build_study_network(args.network,ts,repo,cfg['weight_seed'],cfg.get('weight_initialization','original'))
         original=graph.audit_clone()
-        # Calibrate scale on the original only, before any model request. Keep weights unchanged.
-        scale=1e-30
-        probe=list(original.audit_outputs(1,scale))
-        if not probe or any(not math.isfinite(v) for v in probe) or max(abs(v) for v in probe)==0:
-            raise RuntimeError('Original output cannot calibrate nonvacuous numerical checks')
-        scale=struct.unpack('f',struct.pack('f',max(1e-35,min(1.,scale/max(abs(v) for v in probe)))))[0]
+        # Keep the original mode unchanged unless the user explicitly selects fan_in.
+        report['stage']='reference_calibration'
+        scale=calibrate_outputs(original,cfg.get('weight_initialization','original'),out/'calibration_report.json')
         from restore_graph import terminal_shapes
         reference_shapes=terminal_shapes(json.loads(original.audit_snapshot()))
         references={seed:list(original.audit_outputs(seed,scale)) for seed in cfg['input_seeds']}
@@ -93,6 +115,7 @@ def main(argv=None):
                 retained.append((consumed,current.audit_clone(),'checkpoint_search'))
             if controller is not None:return controller(current,progress)
             return all_rules(min(25,budget-consumed))
+        report['stage']='search'
         os.environ['TASO_CANDIDATE_AUDIT']='1'
         trace=out/'search_trace.json';started=time.perf_counter()
         result=ts.optimize_with_checkpoints(graph,select,budget=budget,checkpoint_interval=25,
@@ -112,6 +135,7 @@ def main(argv=None):
             choices=[o for o in reference_report['observations'] if o['expansion']==cfg['budget']]
             if not choices:raise ValueError('TASO reference did not reach the requested 100-expansion boundary')
             path=args.baseline/choices[0]['directory']/'execution_graph.json'
+            report['stage']='archive_restore'
             restored_reference,restoration=restore(ts,path)
             report['reference_restoration']=dict(source=str(path),**restoration)
             for seed,reference in references.items():
@@ -124,6 +148,7 @@ def main(argv=None):
             report['restored_reference_timing']=reference_timing
         for number,(expansion,snapshot,role) in enumerate(retained):
             directory=out/'observations'/f'{number:02d}_expansion_{expansion:04d}';directory.mkdir(parents=True)
+            report['stage']='checkpoint_validation'
             raw=json.loads(snapshot.audit_snapshot());save_snapshot(directory/'search_graph.json',raw,weight_store)
             execution=snapshot.audit_preprocess()
             execution_snapshot=json.loads(execution.audit_snapshot())
@@ -143,11 +168,13 @@ def main(argv=None):
             save(directory/'outputs.json',values_by_seed)
             if args.mode=='baseline' and expansion in cfg['reference_points']:
                 from restore_graph import restore
+                report['stage']='archive_restore'
                 restored,restoration=restore(ts,directory/'execution_graph.json')
                 observation['archive_round_trip']=restoration
                 for seed,reference in references.items():
                     if not compare_outputs(reference,list(restored.audit_outputs(seed,scale)),cfg['rtol'],cfg['atol'])['passed']:
                         raise RuntimeError('Recorded reference fails round-trip numerical validation')
+            report['stage']='timing'
             timing_args=argparse.Namespace(blocks=cfg['blocks'],spread_threshold_pct=10.)
             measure(TimingInput(execution,scale),timing_args,directory,observation)
             report['observations'].append(observation);save(out/'worker_result.json',report)
@@ -164,7 +191,8 @@ def main(argv=None):
         journal.unlink();report['journal']=journal.name+'.gz'
         report.update(status='completed',numerically_valid=all(o['numerically_valid'] for o in report['observations']))
     except Exception as exc:
-        report.update(status='failed',error=f'{type(exc).__name__}: {exc}');traceback.print_exc()
+        report.update(status='failed',error=f'{type(exc).__name__}: {exc}',
+                      fatal_preflight_error=report.get('stage') in ('native_api','reference_calibration','archive_restore'));traceback.print_exc()
     finally:
         os.environ.pop('TASO_CANDIDATE_AUDIT',None)
         if controller is not None:report.update(model_calls=controller.model_calls,inference=controller.aggregate())

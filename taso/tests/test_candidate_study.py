@@ -20,7 +20,7 @@ from unittest.mock import patch
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'secondary_experiment'))
 from candidate_identity import prepare, node_label, equivalent, Journal
-from candidate_worker import compare_outputs, TimingInput
+from candidate_worker import compare_outputs, TimingInput, calibrate_outputs
 import candidate_study
 from restore_graph import restore
 
@@ -77,7 +77,8 @@ class CandidateTests(unittest.TestCase):
         saved=dict(nodes=[node(1,0,[]),node(2)],edges=[[1,0,2,0]])
         class FakeGraph:
             def __init__(self):self.nodes=[];self.edges=[]
-            def new_input(self,**kwargs):self.nodes.append(node(10,0,[]));return 10
+            def audit_leaf(self,kind,metadata,data):
+                leaf=node(10,kind,[]);leaf['inputs']=[metadata];leaf['outputs']=[metadata];self.nodes.append(leaf);return 10
             def relu(self,x,inplace=False):self.nodes.append(node(20,8,[int(inplace)]));self.edges.append([x,0,20,0]);return 20
             def audit_preprocess(self):return self
             def audit_snapshot(self):return json.dumps(dict(nodes=self.nodes,edges=self.edges))
@@ -204,6 +205,77 @@ class CandidateTests(unittest.TestCase):
             import gzip
             with gzip.open(reference['path'],'wb') as f:f.write(b'changed')
             with self.assertRaises(ValueError):load_snapshot(first)
+
+    def test_reference_probe_diagnostics_distinguish_nan_infinity_and_zero(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'calibration_report.json'
+            bad=types.SimpleNamespace(audit_outputs=lambda seed,scale:[float('nan'),float('inf'),0.])
+            with self.assertRaisesRegex(RuntimeError,'calibration_report.json'):
+                calibrate_outputs(bad,'original',path)
+            probes=json.loads(path.read_text())['probes']
+            self.assertEqual(len(probes),5)
+            self.assertEqual(probes[0]['nan_count'],1);self.assertEqual(probes[0]['infinity_count'],1)
+            self.assertEqual(probes[0]['zero_count'],1)
+            good=types.SimpleNamespace(audit_outputs=lambda seed,scale:[2.*scale,-scale])
+            self.assertAlmostEqual(calibrate_outputs(good,'fan_in',path),.5)
+
+    def test_leaf_restoration_preserves_stride_and_split_descriptors(self):
+        layout=[23333,2,2,3,1,2,1,1,2,1,2]
+        leaf=node(1,0,[]);leaf['inputs']=[layout];leaf['outputs']=[layout]
+        saved=dict(nodes=[leaf],edges=[])
+        class Fake:
+            def audit_leaf(self,kind,metadata,data):
+                self.leaf=node(100,kind,[]);self.leaf['inputs']=[metadata];self.leaf['outputs']=[metadata];return 100
+            def audit_preprocess(self):return self
+            def audit_snapshot(self):return json.dumps(dict(nodes=[self.leaf],edges=[]))
+        with tempfile.TemporaryDirectory() as tmp,patch.dict(sys.modules,{'numpy':types.ModuleType('numpy')}):
+            path=Path(tmp)/'graph.json';path.write_text(json.dumps(saved))
+            rebuilt,report=restore(types.SimpleNamespace(new_graph=Fake),path)
+            self.assertTrue(report['exact_graph_restoration'])
+            self.assertEqual(rebuilt.leaf['outputs'][0],layout)
+
+    def test_fatal_preflight_stops_repeating_a_deterministic_error(self):
+        calls=[]
+        def run(command,**kwargs):
+            directory=Path(command[command.index('--out')+1]);calls.append(directory)
+            (directory/'worker_result.json').write_text(json.dumps(dict(status='failed',error='bad archive',fatal_preflight_error=True)))
+            return types.SimpleNamespace(returncode=1)
+        with tempfile.TemporaryDirectory() as tmp,patch.object(candidate_study.subprocess,'run',run),contextlib.redirect_stdout(io.StringIO()):
+            args=argparse.Namespace(out=Path(tmp),reference_budget=500,blocks=4,networks=['squeezenet'],preflight_only=True)
+            self.assertEqual(candidate_study.run(args),1);self.assertEqual(len(calls),1)
+
+    @unittest.skipUnless(shutil.which('c++'),'C++ compiler required')
+    def test_actual_native_leaf_metadata_parser_preserves_layout(self):
+        source=(ROOT/'TASO/src/core/ops.cc').read_text()
+        body=source[source.index('TensorHandle Graph::audit_leaf('):source.index('TensorHandle Graph::audit_pool(')]
+        program=r'''
+#include "taso/ops.h"
+#include <stdexcept>
+using namespace taso;
+namespace taso {
+Op::Op():guid(0),ptr(nullptr){}
+Graph::Graph():totalCost(-1){model=nullptr;}
+TensorHandle Graph::input_wrapper(const TensorHandle value){return new Tensor(*value);}
+TensorHandle Graph::new_weight(const Tensor& value){return new Tensor(value);}
+}
+'''+body+r'''
+int main(){
+ Graph graph;vector<int> layout{23333,2,2,3,1,2,1,1,2,1,2};vector<float> values{1,2,3,4,5,6};
+ TensorHandle weight=graph.audit_leaf(OP_WEIGHT,layout,values);
+ int keys[Tensor::MAX_KEY_LENGTH],length=0;weight->serialize(keys,length);
+ assert(vector<int>(keys,keys+length)==layout && static_cast<float*>(weight->data_ptr)[2]==3);
+ TensorHandle input=graph.audit_leaf(OP_INPUT,layout,{});length=0;input->serialize(keys,length);
+ assert(vector<int>(keys,keys+length)==layout && input->data_ptr==nullptr);
+ try{graph.audit_leaf(OP_WEIGHT,layout,{1});assert(false);}catch(const runtime_error&){}
+ layout.pop_back();try{graph.audit_leaf(OP_INPUT,layout,{});assert(false);}catch(const runtime_error&){}
+ delete input;delete weight;
+}
+'''
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);path=root/'test.cc';path.write_text(program)
+            result=subprocess.run(['c++','-std=c++11','-I',str(ROOT/'TASO/include'),str(path),'-o',str(root/'test')],capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stderr)
+            subprocess.run([str(root/'test')],check=True)
 
     @unittest.skipUnless(shutil.which('c++'),'C++ compiler required')
     def test_actual_native_snapshot_weight_bytes_and_journal_provenance(self):
